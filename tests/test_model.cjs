@@ -440,4 +440,53 @@ test("cpuName reads the first model name and drops marketing noise", () => {
   assert.equal(M.cpuName(null), "")
 })
 
+test("barModules orders CPU, GPU, MEM and drops GPU without a GPU", () => {
+  assert.deepEqual(Array.from(M.barModules(true, true, true, true)), ["cpu", "gpu", "memory"])
+  assert.deepEqual(Array.from(M.barModules(true, true, true, false)), ["cpu", "memory"])
+  assert.deepEqual(Array.from(M.barModules(true, true, false, true)), ["cpu", "memory"])
+  assert.deepEqual(Array.from(M.barModules(false, false, true, true)), ["gpu"])
+  assert.deepEqual(Array.from(M.barModules(false, false, false, true)), [])
+})
+
+test("tooltip adds the GPU only when there is one", () => {
+  const cpu = { total: 0.12 }
+  const memory = { fraction: 0.5 }
+  assert.equal(M.tooltip(cpu, memory, null, "."), "CPU 12.0% · Memory 50.0%")
+  assert.equal(M.tooltip(cpu, memory, { busy: 0.165 }, ","), "CPU 12,0% · GPU 16,5% · Memory 50,0%")
+  assert.equal(M.tooltip(null, null, null, "."), "CPU 0.0% · Memory 0.0%")
+})
+
+test("withBarSetting merges one switch into the whole entry", () => {
+  const entry = { showCpu: true, showMemory: true, showGpu: true, custom: "kept" }
+  const next = M.withBarSetting(entry, "showGpu", false, true)
+  assert.deepEqual(JSON.parse(JSON.stringify(next)), { showCpu: true, showMemory: true, showGpu: false, custom: "kept" })
+  assert.equal(entry.showGpu, true)
+  assert.deepEqual(JSON.parse(JSON.stringify(M.withBarSetting({}, "showCpu", false, true))), { showCpu: false })
+})
+
+test("withBarSetting refuses to hide the last module on the bar", () => {
+  assert.equal(M.withBarSetting({ showCpu: false, showGpu: false }, "showMemory", false, true), null)
+  assert.equal(M.withBarSetting({ showMemory: false }, "showCpu", false, false), null)
+  assert.notEqual(M.withBarSetting({ showMemory: false }, "showCpu", false, true), null)
+  assert.notEqual(M.withBarSetting({ showCpu: false, showGpu: false, showMemory: false }, "showCpu", true, true), null)
+})
+
+test("withBarSetting only writes the three bar switches", () => {
+  assert.equal(M.withBarSetting({}, "custom", false, true), null)
+  assert.equal(M.withBarSetting({}, "__proto__", false, true), null)
+})
+
+test("barSwitches lists CPU, GPU and MEM with their state", () => {
+  const rows = M.barSwitches({ showGpu: false }, true)
+  assert.deepEqual(Array.from(rows, (r) => [r.key, r.label, r.checked, r.enabled]), [
+    ["showCpu", "CPU", true, true],
+    ["showGpu", "GPU", false, true],
+    ["showMemory", "MEM", true, true]
+  ])
+  const noGpu = M.barSwitches({}, false)
+  assert.equal(noGpu[1].enabled, false)
+  assert.equal(noGpu[1].note, "No supported GPU")
+  assert.equal(noGpu[0].note, "")
+})
+
 console.log(`\n${passed} tests passed`)

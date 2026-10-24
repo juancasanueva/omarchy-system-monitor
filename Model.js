@@ -88,7 +88,8 @@ var glyphs = {
   write: String.fromCodePoint(0xF0A4D),     // md-file_upload
   download: String.fromCodePoint(0xF0047),  // md-arrow_down_bold_circle
   upload: String.fromCodePoint(0xF005F),    // md-arrow_up_bold_circle
-  activity: String.fromCodePoint(0xF0128)   // md-chart_line
+  activity: String.fromCodePoint(0xF0128),  // md-chart_line
+  settings: String.fromCodePoint(0xF0493)   // md-cog
 }
 
 var BAR_SAMPLES = 60
@@ -709,6 +710,55 @@ function throughput(bytesPerSecond, dp) {
   return decimal(value, unit === 0 ? 0 : 1, dp) + " " + units[unit] + "/s"
 }
 
-function tooltip(cpu, memory, dp) {
-  return "CPU " + percent1(cpu ? cpu.total : 0, dp) + " · Memory " + percent1(memory ? memory.fraction : 0, dp)
+// Bar modules in panel order. The GPU module needs a GPU the card can read.
+function barModules(showCpu, showMemory, showGpu, hasGpu) {
+  var list = []
+  if (showCpu) list.push("cpu")
+  if (showGpu && hasGpu) list.push("gpu")
+  if (showMemory) list.push("memory")
+  return list
+}
+
+// --- Bar settings ----------------------------------------------------------
+
+var BAR_SWITCHES = [
+  { key: "showCpu", label: "CPU" },
+  { key: "showGpu", label: "GPU" },
+  { key: "showMemory", label: "MEM" }
+]
+
+// A missing key means shown, as the manifest defaults say.
+function shown(settings, key) {
+  return !settings || settings[key] !== false
+}
+
+function barSwitches(settings, hasGpu) {
+  var out = []
+  for (var i = 0; i < BAR_SWITCHES.length; i++) {
+    var s = BAR_SWITCHES[i]
+    var noGpu = s.key === "showGpu" && !hasGpu
+    out.push({ key: s.key, label: s.label, checked: shown(settings, s.key), enabled: !noGpu, note: noGpu ? "No supported GPU" : "" })
+  }
+  return out
+}
+
+// The widget's whole shell.json entry (without its id) with one bar switch
+// changed; the host replaces the entry rather than merging. Null for an
+// unknown key, or when the change would leave the bar empty: the widget would
+// vanish and the panel holding these switches with it.
+function withBarSetting(settings, key, value, hasGpu) {
+  var known = false
+  for (var i = 0; i < BAR_SWITCHES.length; i++) if (BAR_SWITCHES[i].key === key) known = true
+  if (!known) return null
+  var next = {}
+  for (var k in settings) next[k] = settings[k]
+  next[key] = value === true
+  if (barModules(shown(next, "showCpu"), shown(next, "showMemory"), shown(next, "showGpu"), hasGpu).length === 0) return null
+  return next
+}
+
+function tooltip(cpu, memory, gpu, dp) {
+  var text = "CPU " + percent1(cpu ? cpu.total : 0, dp)
+  if (gpu) text += " · GPU " + percent1(gpu.busy, dp)
+  return text + " · Memory " + percent1(memory ? memory.fraction : 0, dp)
 }
