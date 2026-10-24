@@ -8,8 +8,8 @@ import "Model.js" as Model
 
 // System Monitor: an Omarchy port of the macOS menu bar app
 // (github.com/juancasanueva/SWIFTUI_system_monitor). The bar shows CPU and
-// memory with a sparkline each; the panel shows the CPU, Memory, Disk and
-// Network cards.
+// memory with a sparkline each; the panel shows the CPU, GPU, Memory, Disk
+// and Network cards.
 Panel {
   id: root
   moduleName: "juancasanueva.system-monitor"
@@ -75,6 +75,12 @@ Panel {
   property var cpu: null
   property var cpuHistory: []
   property var cpuTemperature: null
+  property string cpuName: ""
+  property string gpuDevice: ""
+  property string gpuHwmon: ""
+  property string gpuName: ""
+  property var gpu: null
+  property var gpuHistory: []
   property var memory: null
   property var memoryHistory: []
   property var disk: null
@@ -113,6 +119,56 @@ Panel {
     }
   }
 
+  // The first DRM card with gpu_busy_percent is an amdgpu GPU; its hwmon sits
+  // under the same device, so readings never mix two GPUs.
+  function findGpu() {
+    for (var i = 0; i < Model.MAX_GPU_CARDS; i++) {
+      var device = "/sys/class/drm/card" + i + "/device"
+      hwmonNameFile.path = device + "/gpu_busy_percent"
+      if (Model.parseInteger(readText(hwmonNameFile)) === null) continue
+      for (var j = 0; j < Model.MAX_HWMON; j++) {
+        hwmonNameFile.path = device + "/hwmon/hwmon" + j + "/name"
+        if (readText(hwmonNameFile).trim() === "amdgpu") {
+          root.gpuHwmon = device + "/hwmon/hwmon" + j
+          break
+        }
+      }
+      root.gpuDevice = device
+      root.gpuName = readGpuName(device)
+      return
+    }
+  }
+
+  // pci.ids is read once and released; its text is not kept.
+  function readGpuName(device) {
+    hwmonNameFile.path = device + "/product_name"
+    var product = readText(hwmonNameFile)
+    hwmonNameFile.path = device + "/vendor"
+    var vendor = readText(hwmonNameFile)
+    hwmonNameFile.path = device + "/device"
+    var id = readText(hwmonNameFile)
+    pciIdsFile.path = "/usr/share/hwdata/pci.ids"
+    var name = Model.gpuName(product, readText(pciIdsFile), vendor, id)
+    pciIdsFile.path = ""
+    return name
+  }
+
+  function gpuFilePath(file) {
+    var dir = file[1] === "device" ? root.gpuDevice : root.gpuHwmon
+    return dir === "" ? "" : dir + "/" + file[2]
+  }
+
+  function sampleGpu() {
+    var files = {}
+    for (var i = 0; i < gpuFiles.count; i++) {
+      var view = gpuFiles.objectAt(i)
+      files[Model.GPU_FILES[i][0]] = view && view.path !== "" ? readText(view) : ""
+    }
+    var snapshot = Model.gpuSnapshot(files)
+    root.gpu = snapshot
+    if (snapshot) root.gpuHistory = Model.pushHistory(root.gpuHistory, snapshot.busy, Model.GRAPH_SAMPLES)
+  }
+
   function sample() {
     var now = Date.now()
     var seconds = root.lastSampleMs > 0 ? (now - root.lastSampleMs) / 1000 : 0
@@ -128,6 +184,7 @@ Panel {
       }
     }
     if (cpuTempFile.path !== "") root.cpuTemperature = Model.parseTemperature(readText(cpuTempFile))
+    if (root.gpuDevice !== "") sampleGpu()
 
     var memory = Model.memorySnapshot(Model.parseMeminfo(readText(memFile)), Model.parseZramUsed(readText(zramFile)))
     if (memory) {
@@ -170,7 +227,9 @@ Panel {
 
   Component.onCompleted: {
     loadTopology()
+    root.cpuName = Model.cpuName(readText(cpuinfoFile))
     findCpuSensor()
+    findGpu()
     sample()
     refreshDisk()
   }
@@ -187,6 +246,19 @@ Panel {
   FileView { id: eCoresFile; path: "/sys/devices/cpu_atom/cpus"; blockAllReads: true; printErrors: false }
   FileView { id: hwmonNameFile; blockAllReads: true; printErrors: false }
   FileView { id: cpuTempFile; blockAllReads: true; printErrors: false }
+  FileView { id: cpuinfoFile; path: "/proc/cpuinfo"; blockAllReads: true; printErrors: false }
+  FileView { id: pciIdsFile; blockAllReads: true; printErrors: false }
+
+  Instantiator {
+    id: gpuFiles
+    model: Model.GPU_FILES
+    delegate: FileView {
+      required property var modelData
+      path: root.gpuFilePath(modelData)
+      blockAllReads: true
+      printErrors: false
+    }
+  }
 
   Timer {
     interval: root.sampleInterval
@@ -408,7 +480,7 @@ Panel {
         radius: Style.cornerRadius
         color: root.pal.panelBackground
 
-        // Scrolls only when the four cards do not fit the screen.
+        // Scrolls only when the cards do not fit the screen.
         Flickable {
           anchors.fill: parent
           anchors.margins: Style.space(12)
@@ -464,6 +536,7 @@ Panel {
             }
 
             CpuCard { width: cards.width }
+            GpuCard { width: cards.width; visible: root.gpu !== null }
             MemoryCard { width: cards.width }
             DiskCard { width: cards.width }
             NetworkCard { width: cards.width }
@@ -493,8 +566,10 @@ Panel {
   }
 
   component CardHeader: Row {
+    id: header
     property string glyph: ""
     property string title: ""
+    property string detail: ""
     property color accent: "white"
     spacing: Style.space(6)
 
@@ -509,11 +584,24 @@ Panel {
 
     Text {
       textFormat: Text.PlainText
+      id: headerTitle
       text: parent.title
       color: root.pal.textPrimary
       font.family: root.fontFamily
       font.pixelSize: Style.space(13)
       font.weight: Font.DemiBold
+      anchors.verticalCenter: parent.verticalCenter
+    }
+
+    Text {
+      visible: header.detail !== ""
+      width: Math.min(implicitWidth, header.width - headerTitle.x - headerTitle.width - header.spacing)
+      textFormat: Text.PlainText
+      text: header.detail
+      elide: Text.ElideRight
+      color: root.pal.textSecondary
+      font.family: root.fontFamily
+      font.pixelSize: Style.space(12)
       anchors.verticalCenter: parent.verticalCenter
     }
   }
@@ -672,7 +760,7 @@ Panel {
   }
 
   component CpuCard: Card {
-    CardHeader { glyph: Model.glyphs.cpu; title: "CPU"; accent: root.pal.cpuAccent }
+    CardHeader { width: parent.width; glyph: Model.glyphs.cpu; title: "CPU"; detail: root.cpuName; accent: root.pal.cpuAccent }
 
     GaugeAndRows {
       width: parent.width
@@ -699,6 +787,49 @@ Panel {
         cores: modelData.cores
         accent: modelData.color
       }
+    }
+  }
+
+  component GpuCard: Card {
+    CardHeader { width: parent.width; glyph: Model.glyphs.gpu; title: "GPU"; detail: root.gpuName; accent: root.pal.gpuAccent }
+
+    GaugeAndRows {
+      width: parent.width
+      fraction: root.gpu ? root.gpu.busy : 0
+      accent: root.pal.gpuAccent
+      valueText: Model.percent1(root.gpu ? root.gpu.busy : 0, root.dp)
+      subtitle: "GPU"
+      rows: Model.gpuRows(root.gpu, root.dp, root.pal)
+    }
+
+    Repeater {
+      model: Model.gpuMemory(root.gpu, root.dp, root.pal)
+
+      Column {
+        required property var modelData
+        width: parent.width
+        spacing: Style.space(6)
+
+        KeyValueRow {
+          width: parent.width
+          key: modelData.key
+          value: modelData.value
+        }
+
+        StackedBar {
+          width: parent.width
+          height: Style.space(6)
+          segments: [{ fraction: modelData.fraction, color: modelData.color }]
+          trackColor: root.pal.textSecondary
+        }
+      }
+    }
+
+    HistoryGraph {
+      baselineColor: root.pal.textSecondary
+      width: parent.width
+      height: Style.space(48)
+      series: [{ samples: root.gpuHistory, color: root.pal.gpuAccent, fillOpacity: 0.35 }]
     }
   }
 

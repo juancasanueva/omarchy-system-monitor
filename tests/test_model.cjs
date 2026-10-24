@@ -324,4 +324,120 @@ test("cpuRows adds a Temperature row only when a reading exists", () => {
   assert.equal(rows[2].color, PAL.textPrimary)
 })
 
+const GPU_FILES = {
+  busy: "11\n",
+  memBusy: "",
+  vramUsed: "1084268544\n",
+  vramTotal: "4294967296\n",
+  gttUsed: "79552512\n",
+  gttTotal: "14475911168\n",
+  temp: "33000\n",
+  powerAverage: "11104000\n",
+  powerInput: "11075000\n",
+  sclk: "1127000000\n",
+  mclk: "",
+  vddgfx: "0\n"
+}
+
+test("gpuSnapshot reads the amdgpu sysfs and hwmon files", () => {
+  const g = M.gpuSnapshot(GPU_FILES)
+  near(g.busy, 0.11)
+  assert.equal(g.memBusy, null)
+  assert.equal(g.vramUsed, 1084268544)
+  assert.equal(g.vramTotal, 4294967296)
+  assert.equal(g.gttUsed, 79552512)
+  assert.equal(g.gttTotal, 14475911168)
+  assert.equal(g.temperature, 33)
+  near(g.watts, 11.104)
+  assert.equal(g.coreMhz, 1127)
+  assert.equal(g.memoryMhz, null)
+  assert.equal(g.vddgfx, null)
+})
+
+test("gpuSnapshot falls back to power1_input and is null without a busy reading", () => {
+  near(M.gpuSnapshot(Object.assign({}, GPU_FILES, { powerAverage: "" })).watts, 11.075)
+  assert.equal(M.gpuSnapshot(Object.assign({}, GPU_FILES, { busy: "" })), null)
+  assert.equal(M.gpuSnapshot(Object.assign({}, GPU_FILES, { busy: "abc" })), null)
+  assert.equal(M.gpuSnapshot({}), null)
+  const sparse = M.gpuSnapshot({ busy: "250" })
+  assert.equal(sparse.busy, 1)
+  assert.equal(sparse.vramTotal, null)
+  assert.equal(sparse.temperature, null)
+})
+
+test("gpuMemory gives VRAM and shared memory with their used fraction", () => {
+  const rows = M.gpuMemory(M.gpuSnapshot(GPU_FILES), ".", { gpuAccent: "#9" })
+  assert.deepEqual(Array.from(rows, (r) => [r.key, r.value, r.color]), [
+    ["VRAM", "1.01 GB / 4 GB", "#9"],
+    ["Shared", "75.9 MB / 13.48 GB", "#9"]
+  ])
+  near(rows[0].fraction, 1084268544 / 4294967296)
+  near(rows[1].fraction, 79552512 / 14475911168)
+  assert.deepEqual(Array.from(M.gpuMemory(M.gpuSnapshot({ busy: "5" }), ".", PAL)), [])
+  assert.deepEqual(Array.from(M.gpuMemory(null, ".", PAL)), [])
+})
+
+test("gpuRows shows every other reading the GPU reports, and only those", () => {
+  const rows = M.gpuRows(M.gpuSnapshot(GPU_FILES), ".", PAL)
+  assert.deepEqual(Array.from(rows, (r) => [r.key, r.value]), [
+    ["Temperature", "33.0 °C"],
+    ["Power", "11.1 W"],
+    ["Core clock", "1127 MHz"]
+  ])
+  const full = M.gpuRows(M.gpuSnapshot(Object.assign({}, GPU_FILES, { memBusy: "40", mclk: "2800000000", vddgfx: "850" })), ",", PAL)
+  assert.deepEqual(Array.from(full, (r) => r.key), ["Memory busy", "Temperature", "Power", "Core clock", "Memory clock", "Voltage"])
+  assert.equal(full[0].value, "40,0%")
+  assert.equal(full[2].value, "11,1 W")
+  assert.equal(full[4].value, "2800 MHz")
+  assert.equal(full[5].value, "850 mV")
+  assert.deepEqual(Array.from(M.gpuRows(null, ".", PAL)), [])
+})
+
+test("themePalette gives the GPU the cyan hue, or the accent without one", () => {
+  assert.equal(M.themePalette(M.parseThemeColors(THEME), SHELL).gpuAccent, "#a5a0b6")
+  assert.equal(M.themePalette({}, SHELL).gpuAccent, SHELL.accent)
+})
+
+const PCI_IDS = [
+  "# comment",
+  "1002  Advanced Micro Devices, Inc. [AMD/ATI]",
+  "\t1111  Other GPU",
+  "\t1114  Krackan [Radeon 840M / 860M Graphics]",
+  "\t\t1f66 0030  Some subsystem",
+  "\t15bf  Phoenix1",
+  "1003  ULSI Systems",
+  "\t1114  Wrong vendor device",
+  ""
+].join("\n")
+
+test("pciDeviceName finds the device under its vendor in pci.ids", () => {
+  assert.equal(M.pciDeviceName(PCI_IDS, "0x1002\n", "0x1114\n"), "Radeon 840M / 860M Graphics")
+  assert.equal(M.pciDeviceName(PCI_IDS, "0x1002", "0x15bf"), "Phoenix1")
+  assert.equal(M.pciDeviceName(PCI_IDS, "0x1003", "0x1114"), "Wrong vendor device")
+  assert.equal(M.pciDeviceName(PCI_IDS, "0x1002", "0x9999"), "")
+  assert.equal(M.pciDeviceName(PCI_IDS, "0x10de", "0x1114"), "")
+  assert.equal(M.pciDeviceName(PCI_IDS, "garbage", "0x1114"), "")
+  assert.equal(M.pciDeviceName("", "0x1002", "0x1114"), "")
+  assert.equal(M.pciDeviceName(null, "0x1002", "0x1114"), "")
+})
+
+test("gpuName prefers amdgpu's product_name over pci.ids", () => {
+  assert.equal(M.gpuName("AMD Radeon RX 7800 XT\n", PCI_IDS, "0x1002", "0x1114"), "AMD Radeon RX 7800 XT")
+  assert.equal(M.gpuName("", PCI_IDS, "0x1002", "0x1114"), "Radeon 840M / 860M Graphics")
+  assert.equal(M.gpuName(undefined, "", "0x1002", "0x1114"), "")
+})
+
+test("cpuName reads the first model name and drops marketing noise", () => {
+  const info = (name) => `processor\t: 0\nvendor_id\t: x\nmodel name\t: ${name}\nflags\t\t: fpu\n\nprocessor\t: 1\nmodel name\t: other\n`
+  assert.equal(M.cpuName(info("AMD Ryzen AI 7 350 w/ Radeon 860M")), "AMD Ryzen AI 7 350")
+  assert.equal(M.cpuName(info("AMD Ryzen 7 5800X 8-Core Processor             ")), "AMD Ryzen 7 5800X")
+  assert.equal(M.cpuName(info("AMD Ryzen 5 5600G with Radeon Graphics")), "AMD Ryzen 5 5600G")
+  assert.equal(M.cpuName(info("Intel(R) Core(TM) i7-1165G7 @ 2.80GHz")), "Intel Core i7-1165G7")
+  assert.equal(M.cpuName(info("Intel(R) Xeon(R) CPU E5-2680 v4 @ 2.40GHz")), "Intel Xeon E5-2680 v4")
+  assert.equal(M.cpuName(info("13th Gen Intel(R) Core(TM) i7-1360P")), "13th Gen Intel Core i7-1360P")
+  assert.equal(M.cpuName("processor\t: 0\nBogoMIPS\t: 108.00\n"), "")
+  assert.equal(M.cpuName(""), "")
+  assert.equal(M.cpuName(null), "")
+})
+
 console.log(`\n${passed} tests passed`)

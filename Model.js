@@ -7,12 +7,15 @@
 //
 // Sources, all kernel-generated:
 //   /proc/stat        CPU ticks, aggregate and per core
+//   /proc/cpuinfo     CPU model name
 //   /proc/meminfo     memory breakdown
 //   /proc/diskstats   sectors read and written per block device
 //   /proc/net/dev     bytes received and sent per interface
 //   /sys/block/zram0/mm_stat           compressed swap held in RAM
 //   /sys/devices/cpu_{core,atom}/cpus  Intel hybrid P/E core topology
 //   /sys/class/hwmon/hwmon*/temp1_input  CPU package temperature
+//   /sys/class/drm/card*/device/       amdgpu load and memory, plus its hwmon
+//   /usr/share/hwdata/pci.ids          GPU name when amdgpu has no product_name
 // Disk capacity comes from `df` (see Panel.qml) because statvfs has no procfs file.
 // Colours come from the current Omarchy theme's colors.toml.
 
@@ -61,6 +64,7 @@ function themePalette(colors, shell) {
     textPrimary: shell.popupText,
     cpuAccent: blue,
     cpuEfficiency: hue("cyan", shell.accent),
+    gpuAccent: hue("cyan", shell.accent),
     memAccent: hue("yellow", shell.accent),
     memWired: hue("red", shell.urgent),
     memCompressed: magenta,
@@ -76,6 +80,7 @@ function themePalette(colors, shell) {
 // Nerd Font glyphs standing in for the SF Symbols of the macOS app.
 var glyphs = {
   cpu: String.fromCodePoint(0xF061A),       // md-chip
+  gpu: String.fromCodePoint(0xF08AE),       // md-expansion_card
   memory: String.fromCodePoint(0xF035B),    // md-memory
   disk: String.fromCodePoint(0xF02CA),      // md-harddisk
   network: String.fromCodePoint(0xF059F),   // md-web
@@ -205,6 +210,26 @@ function cpuUsage(prev, cur, topology) {
   return usage
 }
 
+// The first "model name" of /proc/cpuinfo, without trademarks, clock speed,
+// core count or the integrated graphics. Empty where the kernel reports none,
+// as on most ARM boards.
+function cpuName(text) {
+  var rows = lines(text)
+  for (var i = 0; i < rows.length; i++) {
+    var m = /^model name\s*:\s*(.{1,200})$/.exec(rows[i])
+    if (!m) continue
+    return m[1]
+      .replace(/\((R|TM)\)/gi, "")
+      .replace(/\s+(w\/|with)\s+Radeon.*$/i, "")
+      .replace(/\s*@.*$/, "")
+      .replace(/\s+\d{1,3}-Core Processor.*$/i, "")
+      .replace(/\s+CPU\b/, "")
+      .replace(/\s+/g, " ")
+      .trim()
+  }
+  return ""
+}
+
 // Kernel CPU list such as "0-7,16-19".
 function parseCpuList(text) {
   var out = []
@@ -281,6 +306,131 @@ function cpuRows(usage, dp, pal, celsius) {
   if (typeof celsius === "number" && isFinite(celsius)) {
     rows.push({ key: "Temperature", value: temperature(celsius, dp), color: pal.textPrimary })
   }
+  return rows
+}
+
+// --- GPU -------------------------------------------------------------------
+
+var MAX_GPU_CARDS = 8
+
+// The files gpuSnapshot reads: [role, "device" or "hwmon", file name].
+var GPU_FILES = [
+  ["busy", "device", "gpu_busy_percent"],
+  ["memBusy", "device", "mem_busy_percent"],
+  ["vramUsed", "device", "mem_info_vram_used"],
+  ["vramTotal", "device", "mem_info_vram_total"],
+  ["gttUsed", "device", "mem_info_gtt_used"],
+  ["gttTotal", "device", "mem_info_gtt_total"],
+  ["temp", "hwmon", "temp1_input"],
+  ["powerAverage", "hwmon", "power1_average"],
+  ["powerInput", "hwmon", "power1_input"],
+  ["sclk", "hwmon", "freq1_input"],
+  ["mclk", "hwmon", "freq2_input"],
+  ["vddgfx", "hwmon", "in0_input"]
+]
+
+// One whole number from a sysfs file, or null when the file is missing or
+// holds anything else.
+function parseInteger(text) {
+  if (text === undefined || text === null) return null
+  var m = /^\s*(-?\d{1,20})\s*$/.exec(String(text))
+  return m ? Number(m[1]) : null
+}
+
+function positive(value) {
+  return value !== null && value > 0 ? value : null
+}
+
+// The raw text of the amdgpu files, keyed by role: device/gpu_busy_percent,
+// mem_busy_percent and mem_info_{vram,gtt}_{used,total}, then the card's hwmon
+// temp1 (edge, millidegrees), power1_average or power1_input (microwatts),
+// freq1/freq2 (sclk/mclk, Hz) and in0 (vddgfx, mV). Null without a busy
+// reading, which means the card is not an amdgpu GPU.
+function gpuSnapshot(files) {
+  var busy = parseInteger(files.busy)
+  if (busy === null) return null
+  var memBusy = parseInteger(files.memBusy)
+  var power = positive(parseInteger(files.powerAverage))
+  if (power === null) power = positive(parseInteger(files.powerInput))
+  var sclk = positive(parseInteger(files.sclk))
+  var mclk = positive(parseInteger(files.mclk))
+  return {
+    busy: clamp01(busy / 100),
+    memBusy: memBusy === null ? null : clamp01(memBusy / 100),
+    vramUsed: parseInteger(files.vramUsed),
+    vramTotal: positive(parseInteger(files.vramTotal)),
+    gttUsed: parseInteger(files.gttUsed),
+    gttTotal: positive(parseInteger(files.gttTotal)),
+    temperature: parseTemperature(files.temp),
+    watts: power === null ? null : power / 1e6,
+    coreMhz: sclk === null ? null : Math.round(sclk / 1e6),
+    memoryMhz: mclk === null ? null : Math.round(mclk / 1e6),
+    vddgfx: positive(parseInteger(files.vddgfx))
+  }
+}
+
+// pci.ids is about 1.6 MB; anything far past that is not the hwdata file.
+var MAX_PCI_IDS = 8 << 20
+
+function pciId(text) {
+  var m = /^\s*0x([0-9a-fA-F]{4})\s*$/.exec(text === undefined || text === null ? "" : String(text))
+  return m ? m[1].toLowerCase() : null
+}
+
+// Device name from pci.ids: vendors start a line, their devices follow on
+// tab-indented lines. "Krackan [Radeon 840M / 860M Graphics]" becomes the
+// marketing name inside the brackets.
+function pciDeviceName(text, vendorText, deviceText) {
+  var vendor = pciId(vendorText)
+  var device = pciId(deviceText)
+  if (!vendor || !device || text === undefined || text === null) return ""
+  var s = String(text)
+  if (s.length > MAX_PCI_IDS) return ""
+  var start = s.indexOf("\n" + vendor + "  ")
+  if (start < 0) return ""
+  var end = s.slice(start + 1).search(/\n[0-9a-fA-F]/)
+  var block = end < 0 ? s.slice(start) : s.slice(start, start + 1 + end)
+  var m = new RegExp("\n\t" + device + "  ([^\n]{1,200})").exec(block)
+  if (!m) return ""
+  var bracket = /\[([^\]]+)\]\s*$/.exec(m[1])
+  return (bracket ? bracket[1] : m[1]).trim()
+}
+
+function gpuName(productName, pciIds, vendorText, deviceText) {
+  var own = productName === undefined || productName === null ? "" : String(productName).trim()
+  if (own !== "" && own.length <= 200) return own
+  return pciDeviceName(pciIds, vendorText, deviceText)
+}
+
+function usedOfTotal(used, total, dp) {
+  return memoryBytes(used || 0, dp) + " / " + memoryBytes(total, dp)
+}
+
+// VRAM and shared system memory (GTT), each with a usage bar.
+function gpuMemory(g, dp, pal) {
+  if (!g) return []
+  var out = []
+  if (g.vramTotal !== null) {
+    out.push({ key: "VRAM", value: usedOfTotal(g.vramUsed, g.vramTotal, dp), fraction: clamp01(g.vramUsed / g.vramTotal), color: pal.gpuAccent })
+  }
+  if (g.gttTotal !== null) {
+    out.push({ key: "Shared", value: usedOfTotal(g.gttUsed, g.gttTotal, dp), fraction: clamp01(g.gttUsed / g.gttTotal), color: pal.gpuAccent })
+  }
+  return out
+}
+
+// Rows beside the ring for the readings this GPU reports; an APU, for one, has
+// no memory clock.
+function gpuRows(g, dp, pal) {
+  if (!g) return []
+  var rows = []
+  if (g.memBusy !== null) rows.push({ key: "Memory busy", value: percent1(g.memBusy, dp) })
+  if (g.temperature !== null) rows.push({ key: "Temperature", value: temperature(g.temperature, dp) })
+  if (g.watts !== null) rows.push({ key: "Power", value: decimal(g.watts, 1, dp) + " W" })
+  if (g.coreMhz !== null) rows.push({ key: "Core clock", value: g.coreMhz + " MHz" })
+  if (g.memoryMhz !== null) rows.push({ key: "Memory clock", value: g.memoryMhz + " MHz" })
+  if (g.vddgfx !== null) rows.push({ key: "Voltage", value: g.vddgfx + " mV" })
+  for (var i = 0; i < rows.length; i++) rows[i].color = pal.textPrimary
   return rows
 }
 

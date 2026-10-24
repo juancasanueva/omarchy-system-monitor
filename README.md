@@ -1,13 +1,14 @@
 # System Monitor
 
-CPU and memory with live sparklines in the Omarchy bar, and a panel with CPU, Memory, Disk and Network cards. A port of the macOS menu bar app [SWIFTUI_system_monitor](https://github.com/juancasanueva/SWIFTUI_system_monitor), with the same layout and number formats, coloured by your current Omarchy theme.
+CPU and memory with live sparklines in the Omarchy bar, and a panel with CPU, GPU, Memory, Disk and Network cards. A port of the macOS menu bar app [SWIFTUI_system_monitor](https://github.com/juancasanueva/SWIFTUI_system_monitor), with the same layout and number formats, coloured by your current Omarchy theme.
 
 <p align="center"><img src="preview.png?v=4" alt="System Monitor panel: CPU, Memory, Disk and Network cards" width="360"></p>
 
 ## What it shows
 
 - **Bar**: `CPU 12% ▁▂▃` `|` `MEM 59% ▃▃▄` on a small card. Each value has a fixed width, so the bar never shifts. The last 60 samples feed each sparkline.
-- **CPU**: total usage ring, User, System and package temperature, a two-minute history graph, and one bar per logical core. On Intel hybrid CPUs, P-Cores and E-Cores are shown as separate groups with their own averages.
+- **CPU**: the CPU's model in the header, total usage ring, User, System and package temperature, a two-minute history graph, and one bar per logical core. On Intel hybrid CPUs, P-Cores and E-Cores are shown as separate groups with their own averages.
+- **GPU**: the GPU's name in the header, load ring, temperature, power draw and core clock (plus memory busy, memory clock and voltage where the GPU reports them), VRAM and shared memory with a usage bar each, and a history graph. AMD GPUs (`amdgpu` driver) only; the card is hidden on other GPUs.
 - **Memory**: usage ring, Used, Total, Wired and Compressed, a stacked bar (App, Wired, Compressed, Cached, Free) with its legend, and a history graph.
 - **Disk**: usage ring for `/`, Used, Free and Total, and read and write throughput.
 - **Network**: download and upload rates, totals since boot, and a shared-scale graph of both.
@@ -22,7 +23,7 @@ Every colour comes from the current Omarchy theme and changes with it when you s
 | Role | Theme colour |
 | --- | --- |
 | CPU, Cached, Upload | blue |
-| E-Cores | cyan |
+| E-Cores, GPU | cyan |
 | Memory, App | yellow |
 | Wired | red |
 | Compressed, Network | magenta |
@@ -34,9 +35,14 @@ If a theme defines none of these, its accent colour is used (and its urgent colo
 
 | Card value | Source |
 | --- | --- |
+| CPU name | First `model name` in `/proc/cpuinfo`, without trademarks, clock speed, core count or integrated graphics |
 | CPU total, User, System | `/proc/stat` deltas. Busy is everything except idle and iowait. User includes nice. System includes irq and softirq. |
 | Temperature | `temp1_input` of the first `/sys/class/hwmon` sensor whose driver is `k10temp`, `zenpower`, `coretemp` or `cpu_thermal`. The row is hidden when none is found. |
 | P-Cores / E-Cores | `/sys/devices/cpu_core/cpus` and `/sys/devices/cpu_atom/cpus`. If they are missing, all cores are shown in one "Cores" group. |
+| GPU name | amdgpu's `product_name` (dedicated cards), otherwise the device's entry in `/usr/share/hwdata/pci.ids`, read once at startup |
+| GPU load, Memory busy | `gpu_busy_percent` and `mem_busy_percent` of the first `/sys/class/drm/card*/device` that has them |
+| VRAM, Shared | `mem_info_vram_{used,total}` and `mem_info_gtt_{used,total}`. Shared is GTT: system RAM the GPU maps, which is most of its memory on an integrated GPU. |
+| GPU Temperature, Power, clocks, Voltage | The card's own `amdgpu` hwmon: `temp1_input` (edge), `power1_average` or `power1_input`, `freq1_input` (core) and `freq2_input` (memory), `in0_input` (vddgfx). Rows without a reading are hidden. |
 | Memory Used | `MemTotal - MemAvailable` |
 | App | `AnonPages + Shmem` |
 | Wired | `SUnreclaim + KernelStack + PageTables` (kernel memory that cannot be reclaimed) |
@@ -63,7 +69,7 @@ Click the widget, or run `omarchy-shell juancasanueva.system-monitor toggle`, to
 
 ## Privacy and side effects
 
-The plugin only reads kernel files under `/proc` and `/sys`, the current theme's `colors.toml`, and runs `/usr/bin/df` with a fixed argument list. Opening btop runs `/usr/bin/omarchy-launch-or-focus-tui --app-id=io.github.juancasanueva.btop btop`, which ships with Omarchy, and only when you ask for it. It makes no network requests, writes no files and stores no state. History lives in memory and resets when the shell restarts.
+The plugin only reads kernel files under `/proc` and `/sys`, the PCI ID database `/usr/share/hwdata/pci.ids`, the current theme's `colors.toml`, and runs `/usr/bin/df` with a fixed argument list. Opening btop runs `/usr/bin/omarchy-launch-or-focus-tui --app-id=io.github.juancasanueva.btop btop`, which ships with Omarchy, and only when you ask for it. It makes no network requests, writes no files and stores no state. History lives in memory and resets when the shell restarts.
 
 ## Removing
 
