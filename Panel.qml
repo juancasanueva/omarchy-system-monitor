@@ -7,8 +7,8 @@ import qs.Ui
 import "Model.js" as Model
 
 // System Monitor: an Omarchy port of the macOS menu bar app
-// (github.com/juancasanueva/SWIFTUI_system_monitor). The bar shows CPU and
-// memory with a sparkline each; the panel shows the CPU, GPU, Memory, Disk
+// (github.com/juancasanueva/SWIFTUI_system_monitor). The bar shows CPU, GPU
+// and memory with a sparkline each; the panel shows the CPU, GPU, Memory, Disk
 // and Network cards.
 Panel {
   id: root
@@ -17,12 +17,8 @@ Panel {
 
   readonly property bool showCpu: setting("showCpu", true) !== false
   readonly property bool showMemory: setting("showMemory", true) !== false
-  readonly property var barModules: {
-    var list = []
-    if (root.showCpu) list.push("cpu")
-    if (root.showMemory) list.push("memory")
-    return list
-  }
+  readonly property bool showGpu: setting("showGpu", true) !== false
+  readonly property var barModules: Model.barModules(root.showCpu, root.showMemory, root.showGpu, root.gpu !== null)
 
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
   readonly property string dp: Qt.locale().decimalPoint
@@ -234,7 +230,32 @@ Panel {
     refreshDisk()
   }
 
-  onOpenedChanged: if (root.opened) root.refreshDisk()
+  onOpenedChanged: {
+    if (root.opened) root.refreshDisk()
+    else root.settingsOpen = false
+  }
+
+  // --- settings --------------------------------------------------------------
+
+  property bool settingsOpen: false
+  property string settingsStatus: ""
+
+  // Saved through the shell into this widget's shell.json entry; the host
+  // hands the new entry back as `settings`, which moves the bar and switches.
+  function setBarSwitch(key, value) {
+    if (Model.shown(root.settings, key) === value) return
+    var next = Model.withBarSetting(root.settings, key, value, root.gpu !== null)
+    if (!next) {
+      root.settingsStatus = "At least one module stays on the bar"
+      return
+    }
+    var api = root.bar ? root.bar.shell : null
+    if (!api || typeof api.updateEntryInline !== "function") {
+      root.settingsStatus = "Could not save: no shell connection"
+      return
+    }
+    root.settingsStatus = api.updateEntryInline(root.moduleName, next) === true ? "" : "Could not save the setting"
+  }
 
   // Kernel-generated files of a few kilobytes; a blocking read is immediate.
   FileView { id: statFile; path: "/proc/stat"; blockAllReads: true; printErrors: false }
@@ -318,14 +339,18 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  function moduleLabel(module) { return module === "cpu" ? "CPU" : "MEM" }
-  function moduleAccent(module) { return module === "cpu" ? root.pal.cpuAccent : root.pal.memAccent }
+  function moduleLabel(module) { return module === "cpu" ? "CPU" : (module === "gpu" ? "GPU" : "MEM") }
+  function moduleAccent(module) {
+    if (module === "cpu") return root.pal.cpuAccent
+    return module === "gpu" ? root.pal.gpuAccent : root.pal.memAccent
+  }
   function moduleFraction(module) {
     if (module === "cpu") return root.cpu ? root.cpu.total : 0
+    if (module === "gpu") return root.gpu ? root.gpu.busy : 0
     return root.memory ? root.memory.fraction : 0
   }
   function moduleSamples(module) {
-    var history = module === "cpu" ? root.cpuHistory : root.memoryHistory
+    var history = module === "cpu" ? root.cpuHistory : (module === "gpu" ? root.gpuHistory : root.memoryHistory)
     return history.slice(Math.max(0, history.length - Model.BAR_SAMPLES))
   }
 
@@ -337,7 +362,7 @@ Panel {
     hasVisualContent: root.barModules.length > 0
     fixedWidth: vertical ? -1 : barCard.width + Style.space(8)
     fixedHeight: vertical ? barColumn.implicitHeight + Style.space(12) : -1
-    tooltipText: Model.tooltip(root.cpu, root.memory, root.dp) + "\nClick for details · Right-click: btop"
+    tooltipText: Model.tooltip(root.cpu, root.memory, root.gpu, root.dp) + "\nClick for details · Right-click: btop"
     onPressed: function(b) {
       if (b === Qt.RightButton) root.openBtop()
       else root.toggle()
@@ -494,52 +519,86 @@ Panel {
             width: parent.width
             spacing: Style.space(12)
 
-            Rectangle {
-              id: btopButton
+            Row {
               width: cards.width
-              height: btopLabel.implicitHeight + Style.space(20)
-              radius: Style.space(12)
-              color: btopMouse.containsMouse ? Qt.alpha(root.pal.textPrimary, 0.10) : root.pal.cardBackground
+              spacing: Style.space(8)
 
-              Row {
-                anchors.centerIn: parent
-                spacing: Style.space(6)
+              Rectangle {
+                id: btopButton
+                width: cards.width - settingsButton.width - parent.spacing
+                height: btopLabel.implicitHeight + Style.space(20)
+                radius: Style.space(12)
+                color: btopMouse.containsMouse ? Qt.alpha(root.pal.textPrimary, 0.10) : root.pal.cardBackground
 
-                Text {
-                  textFormat: Text.PlainText
-                  text: Model.glyphs.activity
-                  color: root.pal.cpuAccent
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.space(15)
-                  anchors.verticalCenter: parent.verticalCenter
+                Row {
+                  anchors.centerIn: parent
+                  spacing: Style.space(6)
+
+                  Text {
+                    textFormat: Text.PlainText
+                    text: Model.glyphs.activity
+                    color: root.pal.cpuAccent
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.space(15)
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+
+                  Text {
+                    id: btopLabel
+                    textFormat: Text.PlainText
+                    text: "Open btop"
+                    color: root.pal.textPrimary
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.space(13)
+                    font.weight: Font.DemiBold
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
                 }
 
-                Text {
-                  id: btopLabel
-                  textFormat: Text.PlainText
-                  text: "Open btop"
-                  color: root.pal.textPrimary
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.space(13)
-                  font.weight: Font.DemiBold
-                  anchors.verticalCenter: parent.verticalCenter
+                MouseArea {
+                  id: btopMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.openBtop()
                 }
               }
 
-              MouseArea {
-                id: btopMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.openBtop()
+              Rectangle {
+                id: settingsButton
+                width: height
+                height: btopButton.height
+                radius: Style.space(12)
+                color: settingsMouse.containsMouse || root.settingsOpen ? Qt.alpha(root.pal.textPrimary, 0.10) : root.pal.cardBackground
+
+                Text {
+                  anchors.centerIn: parent
+                  textFormat: Text.PlainText
+                  text: Model.glyphs.settings
+                  color: root.settingsOpen ? root.pal.cpuAccent : root.pal.textPrimary
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.space(15)
+                }
+
+                MouseArea {
+                  id: settingsMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: {
+                    root.settingsStatus = ""
+                    root.settingsOpen = !root.settingsOpen
+                  }
+                }
               }
             }
 
-            CpuCard { width: cards.width }
-            GpuCard { width: cards.width; visible: root.gpu !== null }
-            MemoryCard { width: cards.width }
-            DiskCard { width: cards.width }
-            NetworkCard { width: cards.width }
+            SettingsCard { width: cards.width; visible: root.settingsOpen }
+            CpuCard { width: cards.width; visible: !root.settingsOpen }
+            GpuCard { width: cards.width; visible: !root.settingsOpen && root.gpu !== null }
+            MemoryCard { width: cards.width; visible: !root.settingsOpen }
+            DiskCard { width: cards.width; visible: !root.settingsOpen }
+            NetworkCard { width: cards.width; visible: !root.settingsOpen }
           }
         }
       }
@@ -756,6 +815,67 @@ Panel {
           }
         }
       }
+    }
+  }
+
+  component SettingsCard: Card {
+    CardHeader { width: parent.width; glyph: Model.glyphs.settings; title: "Bar"; detail: "Modules shown in the bar"; accent: root.pal.cpuAccent }
+
+    Repeater {
+      model: Model.barSwitches(root.settings, root.gpu !== null)
+
+      Item {
+        required property var modelData
+        width: parent.width
+        height: Math.max(switchLabel.implicitHeight, toggle.height)
+        opacity: modelData.enabled ? 1 : 0.5
+
+        Column {
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.space(2)
+
+          Text {
+            id: switchLabel
+            textFormat: Text.PlainText
+            text: modelData.label
+            color: root.pal.textPrimary
+            font.family: root.fontFamily
+            font.pixelSize: Style.space(13)
+          }
+
+          Text {
+            visible: modelData.note !== ""
+            textFormat: Text.PlainText
+            text: modelData.note
+            color: root.pal.textSecondary
+            font.family: root.fontFamily
+            font.pixelSize: Style.space(11)
+          }
+        }
+
+        ToggleSwitch {
+          id: toggle
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          checked: modelData.checked
+          interactive: modelData.enabled
+          foreground: root.pal.textPrimary
+          accent: root.pal.cpuAccent
+          onToggled: root.setBarSwitch(modelData.key, !modelData.checked)
+        }
+      }
+    }
+
+    Text {
+      visible: root.settingsStatus !== ""
+      width: parent.width
+      wrapMode: Text.Wrap
+      textFormat: Text.PlainText
+      text: root.settingsStatus
+      color: Commons.Color.urgent
+      font.family: root.fontFamily
+      font.pixelSize: Style.space(11)
     }
   }
 
