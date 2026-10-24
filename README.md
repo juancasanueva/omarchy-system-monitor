@@ -7,7 +7,7 @@ CPU and memory with live sparklines in the Omarchy bar, and a panel with CPU, Me
 ## What it shows
 
 - **Bar**: `CPU 12% ▁▂▃` `|` `MEM 59% ▃▃▄` on a small card. Each value has a fixed width, so the bar never shifts. The last 60 samples feed each sparkline.
-- **CPU**: total usage ring, User and System, a two-minute history graph, and one bar per logical core. On Intel hybrid CPUs, P-Cores and E-Cores are shown as separate groups with their own averages.
+- **CPU**: total usage ring, User, System and package temperature, a two-minute history graph, and one bar per logical core. On Intel hybrid CPUs, P-Cores and E-Cores are shown as separate groups with their own averages.
 - **Memory**: usage ring, Used, Total, Wired and Compressed, a stacked bar (App, Wired, Compressed, Cached, Free) with its legend, and a history graph.
 - **Disk**: usage ring for `/`, Used, Free and Total, and read and write throughput.
 - **Network**: download and upload rates, totals since boot, and a shared-scale graph of both.
@@ -35,6 +35,7 @@ If a theme defines none of these, its accent colour is used (and its urgent colo
 | Card value | Source |
 | --- | --- |
 | CPU total, User, System | `/proc/stat` deltas. Busy is everything except idle and iowait. User includes nice. System includes irq and softirq. |
+| Temperature | `temp1_input` of the first `/sys/class/hwmon` sensor whose driver is `k10temp`, `zenpower`, `coretemp` or `cpu_thermal`. The row is hidden when none is found. |
 | P-Cores / E-Cores | `/sys/devices/cpu_core/cpus` and `/sys/devices/cpu_atom/cpus`. If they are missing, all cores are shown in one "Cores" group. |
 | Memory Used | `MemTotal - MemAvailable` |
 | App | `AnonPages + Shmem` |

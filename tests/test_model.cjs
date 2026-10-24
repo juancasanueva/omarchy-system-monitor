@@ -294,4 +294,34 @@ test("memoryLegend and cpuRows take their colours from the palette", () => {
   assert.equal(rows[3].color, p.cpuEfficiency)
 })
 
+test("isCpuSensor matches the CPU hwmon drivers only", () => {
+  for (const name of ["k10temp\n", "zenpower", "coretemp\n", "cpu_thermal"]) assert.equal(M.isCpuSensor(name), true, name)
+  for (const name of ["nvme\n", "amdgpu", "acpitz", "", null, undefined]) assert.equal(M.isCpuSensor(name), false, String(name))
+})
+
+test("parseTemperature turns hwmon millidegrees into Celsius", () => {
+  assert.equal(M.parseTemperature("38125\n"), 38.125)
+  assert.equal(M.parseTemperature("-5000"), -5)
+  assert.equal(M.parseTemperature(""), null)
+  assert.equal(M.parseTemperature("abc"), null)
+  assert.equal(M.parseTemperature("999999"), null)
+  assert.equal(M.parseTemperature(undefined), null)
+})
+
+test("temperature formats one decimal with the locale separator", () => {
+  assert.equal(M.temperature(38.125, "."), "38.1 °C")
+  assert.equal(M.temperature(38.125, ","), "38,1 °C")
+  assert.equal(M.temperature(null, "."), M.UNAVAILABLE)
+})
+
+test("cpuRows adds a Temperature row only when a reading exists", () => {
+  const usage = { user: 0.1, system: 0.05, performanceAverage: null, efficiencyAverage: null }
+  assert.deepEqual(Array.from(M.cpuRows(usage, ".", PAL), (r) => r.key), ["User", "System"])
+  assert.deepEqual(Array.from(M.cpuRows(usage, ".", PAL, null), (r) => r.key), ["User", "System"])
+  const rows = M.cpuRows(usage, ".", PAL, 54.5)
+  assert.deepEqual(Array.from(rows, (r) => r.key), ["User", "System", "Temperature"])
+  assert.equal(rows[2].value, "54.5 °C")
+  assert.equal(rows[2].color, PAL.textPrimary)
+})
+
 console.log(`\n${passed} tests passed`)
