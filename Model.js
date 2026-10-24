@@ -12,6 +12,7 @@
 //   /proc/net/dev     bytes received and sent per interface
 //   /sys/block/zram0/mm_stat           compressed swap held in RAM
 //   /sys/devices/cpu_{core,atom}/cpus  Intel hybrid P/E core topology
+//   /sys/class/hwmon/hwmon*/temp1_input  CPU package temperature
 // Disk capacity comes from `df` (see Panel.qml) because statvfs has no procfs file.
 // Colours come from the current Omarchy theme's colors.toml.
 
@@ -246,7 +247,27 @@ function chunk(items, size) {
   return rows
 }
 
-function cpuRows(usage, dp, pal) {
+// hwmon drivers that report the CPU package: AMD (k10temp, zenpower), Intel
+// (coretemp) and ARM SoCs (cpu_thermal). Their temp1 is Tctl or the package.
+var CPU_SENSORS = ["k10temp", "zenpower", "coretemp", "cpu_thermal"]
+var MAX_HWMON = 32
+
+function isCpuSensor(name) {
+  if (name === undefined || name === null) return false
+  return CPU_SENSORS.indexOf(String(name).trim()) >= 0
+}
+
+// hwmon temp*_input is millidegrees Celsius. Readings outside what a sensor
+// can physically report are treated as missing.
+function parseTemperature(text) {
+  if (text === undefined || text === null) return null
+  var m = /^\s*(-?\d{1,7})\s*$/.exec(String(text))
+  if (!m) return null
+  var celsius = Number(m[1]) / 1000
+  return celsius > -50 && celsius < 200 ? celsius : null
+}
+
+function cpuRows(usage, dp, pal, celsius) {
   var rows = [
     { key: "User", value: percent1(usage ? usage.user : 0, dp), color: pal.textPrimary },
     { key: "System", value: percent1(usage ? usage.system : 0, dp), color: pal.textPrimary }
@@ -256,6 +277,9 @@ function cpuRows(usage, dp, pal) {
   }
   if (usage && usage.efficiencyAverage !== null) {
     rows.push({ key: "E-Cores", value: percent1(usage.efficiencyAverage, dp), color: pal.cpuEfficiency })
+  }
+  if (typeof celsius === "number" && isFinite(celsius)) {
+    rows.push({ key: "Temperature", value: temperature(celsius, dp), color: pal.textPrimary })
   }
   return rows
 }
@@ -493,6 +517,11 @@ function percentInt(fraction) {
 
 function percent1(fraction, dp) {
   return decimal(clamp01(fraction) * 100, 1, dp) + "%"
+}
+
+function temperature(celsius, dp) {
+  if (typeof celsius !== "number" || !isFinite(celsius)) return UNAVAILABLE
+  return decimal(celsius, 1, dp) + " °C"
 }
 
 function scaledBytes(bytes, step, units, dp) {

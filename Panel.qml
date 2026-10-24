@@ -74,6 +74,7 @@ Panel {
   property var cpuSample: null
   property var cpu: null
   property var cpuHistory: []
+  property var cpuTemperature: null
   property var memory: null
   property var memoryHistory: []
   property var disk: null
@@ -100,6 +101,18 @@ Panel {
       : null
   }
 
+  // hwmon numbering changes between boots, so the CPU sensor is found by its
+  // driver name once at startup.
+  function findCpuSensor() {
+    for (var i = 0; i < Model.MAX_HWMON; i++) {
+      hwmonNameFile.path = "/sys/class/hwmon/hwmon" + i + "/name"
+      if (Model.isCpuSensor(readText(hwmonNameFile))) {
+        cpuTempFile.path = "/sys/class/hwmon/hwmon" + i + "/temp1_input"
+        return
+      }
+    }
+  }
+
   function sample() {
     var now = Date.now()
     var seconds = root.lastSampleMs > 0 ? (now - root.lastSampleMs) / 1000 : 0
@@ -114,6 +127,7 @@ Panel {
         root.cpuHistory = Model.pushHistory(root.cpuHistory, usage.total, Model.GRAPH_SAMPLES)
       }
     }
+    if (cpuTempFile.path !== "") root.cpuTemperature = Model.parseTemperature(readText(cpuTempFile))
 
     var memory = Model.memorySnapshot(Model.parseMeminfo(readText(memFile)), Model.parseZramUsed(readText(zramFile)))
     if (memory) {
@@ -156,6 +170,7 @@ Panel {
 
   Component.onCompleted: {
     loadTopology()
+    findCpuSensor()
     sample()
     refreshDisk()
   }
@@ -170,6 +185,8 @@ Panel {
   FileView { id: zramFile; path: "/sys/block/zram0/mm_stat"; blockAllReads: true; printErrors: false }
   FileView { id: pCoresFile; path: "/sys/devices/cpu_core/cpus"; blockAllReads: true; printErrors: false }
   FileView { id: eCoresFile; path: "/sys/devices/cpu_atom/cpus"; blockAllReads: true; printErrors: false }
+  FileView { id: hwmonNameFile; blockAllReads: true; printErrors: false }
+  FileView { id: cpuTempFile; blockAllReads: true; printErrors: false }
 
   Timer {
     interval: root.sampleInterval
@@ -663,7 +680,7 @@ Panel {
       accent: root.pal.cpuAccent
       valueText: Model.percent1(root.cpu ? root.cpu.total : 0, root.dp)
       subtitle: "CPU"
-      rows: Model.cpuRows(root.cpu, root.dp, root.pal)
+      rows: Model.cpuRows(root.cpu, root.dp, root.pal, root.cpuTemperature)
     }
 
     HistoryGraph {
