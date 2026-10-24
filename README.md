@@ -1,6 +1,6 @@
 # System Monitor
 
-CPU and memory with live sparklines in the Omarchy bar, and a panel with CPU, Memory, Disk and Network cards. A port of the macOS menu bar app [SWIFTUI_system_monitor](https://github.com/juancasanueva/SWIFTUI_system_monitor), with the same layout, palette and number formats.
+CPU and memory with live sparklines in the Omarchy bar, and a panel with CPU, Memory, Disk and Network cards. A port of the macOS menu bar app [SWIFTUI_system_monitor](https://github.com/juancasanueva/SWIFTUI_system_monitor), with the same layout and number formats, coloured by your current Omarchy theme.
 
 <p align="center"><img src="preview.png" alt="System Monitor panel: CPU, Memory, Disk and Network cards" width="360"></p>
 
@@ -13,6 +13,21 @@ CPU and memory with live sparklines in the Omarchy bar, and a panel with CPU, Me
 - **Network**: download and upload rates, totals since boot, and a shared-scale graph of both.
 
 The widget samples every 2 seconds, or every second while the panel is open. Disk capacity refreshes every 30 seconds and whenever the panel opens.
+
+## Colours
+
+Every colour comes from the current Omarchy theme and changes with it when you switch themes. The panel, cards and text use the theme's popup colours. Each metric keeps the role it has in the macOS app, using an ANSI colour from the theme's `colors.toml`:
+
+| Role | Theme colour |
+| --- | --- |
+| CPU, Cached, Upload | blue |
+| E-Cores | cyan |
+| Memory, App | yellow |
+| Wired | red |
+| Compressed, Network | magenta |
+| Disk, Free, Download | green |
+
+If a theme defines none of these, its accent colour is used (and its urgent colour for Wired).
 
 ## How the numbers map to Linux
 
@@ -46,7 +61,7 @@ Click the widget, or run `omarchy-shell juancasanueva.system-monitor toggle`, to
 
 ## Privacy and side effects
 
-The plugin only reads kernel files under `/proc` and `/sys` and runs `/usr/bin/df` with a fixed argument list. It makes no network requests, writes no files and stores no state. History lives in memory and resets when the shell restarts.
+The plugin only reads kernel files under `/proc` and `/sys`, the current theme's `colors.toml`, and runs `/usr/bin/df` with a fixed argument list. It makes no network requests, writes no files and stores no state. History lives in memory and resets when the shell restarts.
 
 ## Removing
 

@@ -18,6 +18,20 @@ function test(name, fn) {
   passed++
   console.log("ok - " + name)
 }
+const SHELL = { foreground: "#eeeeee", background: "#111111", accent: "#abcdef", urgent: "#ff0000", muted: "#777777", popupBackground: "#222222", popupText: "#dddddd" }
+const THEME = [
+  'accent = "#b59790"',
+  'foreground = "#FAFCFB"',
+  'red = "#c38b7b"',
+  'yellow = "#6B5E73"',
+  "green = '#87a9b0'",
+  'blue = "#b59790"',
+  'magenta = "#c4d8e2"',
+  'color6 = "#a5a0b6"',
+  'bright_red = "#ffffff"',
+  ''
+].join("\n")
+const PAL = { cpuAccent: "#1", cpuEfficiency: "#2", memAccent: "#3", memWired: "#4", memCompressed: "#5", memCached: "#6", memFree: "#7", textPrimary: "#8" }
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`)
 
 const STAT_A = [
@@ -84,12 +98,14 @@ test("parseCpuList expands kernel CPU ranges", () => {
 
 test("coreGroups mirrors the macOS card: one Cores group without levels", () => {
   const cores = [{ index: 0, usage: 0.1, level: "unknown" }, { index: 1, usage: 0.2, level: "unknown" }]
-  const g = M.coreGroups(cores)
+  const g = M.coreGroups(cores, PAL)
   assert.equal(g.length, 1)
   assert.equal(g[0].title, "Cores")
-  const hybrid = M.coreGroups([{ index: 0, usage: 0, level: "performance" }, { index: 1, usage: 0, level: "efficiency" }])
+  const hybrid = M.coreGroups([{ index: 0, usage: 0, level: "performance" }, { index: 1, usage: 0, level: "efficiency" }], PAL)
   assert.deepEqual(Array.from(hybrid, (x) => x.title), ["P-Cores", "E-Cores"])
-  assert.equal(M.coreGroups([]).length, 0)
+  assert.equal(M.coreGroups([], PAL).length, 0)
+  assert.equal(hybrid[0].color, PAL.cpuAccent)
+  assert.equal(hybrid[1].color, PAL.cpuEfficiency)
 })
 
 test("chunk splits core bars into rows of eight", () => {
@@ -134,11 +150,12 @@ test("memorySnapshot adds zram usage to compressed and returns null without MemT
 })
 
 test("memorySegments covers the bar with unattributed in the App colour", () => {
-  const segs = M.memorySegments(M.memorySnapshot(M.parseMeminfo(MEMINFO), 0))
+  const segs = M.memorySegments(M.memorySnapshot(M.parseMeminfo(MEMINFO), 0), PAL)
   assert.deepEqual(Array.from(segs, (s) => s.kind), ["app", "unattributed", "wired", "compressed", "cached", "free"])
   assert.equal(segs[1].color, segs[0].color)
   near(segs.reduce((a, s) => a + s.fraction, 0), 1)
-  assert.equal(M.memorySegments(null).length, 0)
+  assert.equal(segs[2].color, PAL.memWired)
+  assert.equal(M.memorySegments(null, PAL).length, 0)
 })
 
 test("parseZramUsed reads mem_used_total from mm_stat", () => {
@@ -232,6 +249,49 @@ test("sparklinePoints anchors the newest sample to the right edge", () => {
   assert.equal(p.length, 2)
   assert.deepEqual([p[1].x, p[1].y], [100, 0])
   assert.deepEqual([p[0].x, p[0].y], [50, 10])
+})
+
+test("parseThemeColors reads named and numbered ANSI colours", () => {
+  const c = M.parseThemeColors(THEME)
+  assert.equal(c.red, "#c38b7b")
+  assert.equal(c.green, "#87a9b0")
+  assert.equal(c.cyan, "#a5a0b6") // from color6
+  assert.equal(c.bright_red, undefined) // only base colours are kept
+  assert.equal(Object.keys(M.parseThemeColors("x".repeat(70000))).length, 0)
+  assert.equal(Object.keys(M.parseThemeColors(null)).length, 0)
+})
+
+test("themePalette maps the macOS roles onto theme colours", () => {
+  const p = M.themePalette(M.parseThemeColors(THEME), SHELL)
+  assert.equal(p.cpuAccent, "#b59790") // blue
+  assert.equal(p.cpuEfficiency, "#a5a0b6") // cyan
+  assert.equal(p.memAccent, "#6B5E73") // yellow
+  assert.equal(p.memWired, "#c38b7b") // red
+  assert.equal(p.memCompressed, "#c4d8e2") // magenta
+  assert.equal(p.memCached, "#b59790") // blue
+  assert.equal(p.memFree, "#87a9b0") // green
+  assert.equal(p.diskAccent, "#87a9b0")
+  assert.equal(p.networkAccent, "#c4d8e2")
+  assert.equal(p.networkDownload, "#87a9b0")
+  assert.equal(p.networkUpload, "#b59790")
+  assert.equal(p.panelBackground, "#222222")
+  assert.equal(p.textPrimary, "#dddddd")
+})
+
+test("themePalette falls back to shell roles when the theme has no ANSI colours", () => {
+  const p = M.themePalette({}, SHELL)
+  assert.equal(p.cpuAccent, "#abcdef") // accent
+  assert.equal(p.memWired, "#ff0000") // urgent
+  assert.equal(p.memFree, "#abcdef")
+})
+
+test("memoryLegend and cpuRows take their colours from the palette", () => {
+  const p = M.themePalette(M.parseThemeColors(THEME), SHELL)
+  assert.deepEqual(Array.from(M.memoryLegend(p), (e) => e.color), [p.memAccent, p.memWired, p.memCompressed, p.memCached, p.memFree])
+  const rows = M.cpuRows({ user: 0, system: 0, performanceAverage: 0.5, efficiencyAverage: 0.1 }, ".", p)
+  assert.equal(rows[0].color, p.textPrimary)
+  assert.equal(rows[2].color, p.cpuAccent)
+  assert.equal(rows[3].color, p.cpuEfficiency)
 })
 
 console.log(`\n${passed} tests passed`)

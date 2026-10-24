@@ -25,7 +25,43 @@ Panel {
 
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
   readonly property string dp: Qt.locale().decimalPoint
-  readonly property var pal: Model.palette
+  // --- theme -----------------------------------------------------------------
+
+  // The macOS colour roles, assigned from the current Omarchy theme: ANSI hues
+  // from its colors.toml for the metrics, the shell's popup roles for surfaces.
+  property var themeColors: ({})
+  readonly property var pal: {
+    var p = Model.themePalette(root.themeColors, {
+      foreground: Commons.Color.foreground,
+      background: Commons.Color.background,
+      accent: Commons.Color.accent,
+      urgent: Commons.Color.urgent,
+      muted: Commons.Color.muted,
+      popupBackground: Commons.Color.popups.background,
+      popupText: Commons.Color.popups.text
+    })
+    p.cardBackground = Qt.alpha(Commons.Color.popups.text, 0.05)
+    p.textSecondary = Qt.alpha(Commons.Color.popups.text, 0.6)
+    return p
+  }
+
+  // The same file the shell reads for its own colours; re-read on edit and on
+  // every theme switch.
+  FileView {
+    id: themeFile
+    path: Commons.Color.currentThemePath + "/colors.toml"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.themeColors = Model.parseThemeColors(text())
+    onLoadFailed: root.themeColors = ({})
+  }
+
+  Connections {
+    target: Commons.Color
+    function onAccentChanged() { themeFile.reload() }
+    function onForegroundChanged() { themeFile.reload() }
+  }
 
   // --- sampling --------------------------------------------------------------
 
@@ -453,6 +489,8 @@ Panel {
       valueText: gaugeRow.valueText
       subtitle: gaugeRow.subtitle
       fontFamily: root.fontFamily
+      textColor: root.pal.textPrimary
+      subtitleColor: root.pal.textSecondary
     }
 
     Column {
@@ -570,17 +608,18 @@ Panel {
       accent: root.pal.cpuAccent
       valueText: Model.percent1(root.cpu ? root.cpu.total : 0, root.dp)
       subtitle: "CPU"
-      rows: Model.cpuRows(root.cpu, root.dp)
+      rows: Model.cpuRows(root.cpu, root.dp, root.pal)
     }
 
     HistoryGraph {
+      baselineColor: root.pal.textSecondary
       width: parent.width
       height: Style.space(48)
       series: [{ samples: root.cpuHistory, color: root.pal.cpuAccent, fillOpacity: 0.35 }]
     }
 
     Repeater {
-      model: Model.coreGroups(root.cpu ? root.cpu.cores : [])
+      model: Model.coreGroups(root.cpu ? root.cpu.cores : [], root.pal)
       CoreBarGrid {
         required property var modelData
         width: parent.width
@@ -606,7 +645,8 @@ Panel {
     StackedBar {
       width: parent.width
       height: Style.space(8)
-      segments: Model.memorySegments(root.memory)
+      segments: Model.memorySegments(root.memory, root.pal)
+      trackColor: root.pal.textSecondary
     }
 
     Flow {
@@ -614,7 +654,7 @@ Panel {
       spacing: Style.space(10)
 
       Repeater {
-        model: Model.memoryLegend
+        model: Model.memoryLegend(root.pal)
 
         Row {
           required property var modelData
@@ -641,6 +681,7 @@ Panel {
     }
 
     HistoryGraph {
+      baselineColor: root.pal.textSecondary
       width: parent.width
       height: Style.space(48)
       series: [{ samples: root.memoryHistory, color: root.pal.memAccent, fillOpacity: 0.35 }]
@@ -718,6 +759,7 @@ Panel {
     }
 
     HistoryGraph {
+      baselineColor: root.pal.textSecondary
       readonly property real scale: Model.networkScale(root.downloadHistory, root.uploadHistory)
       width: parent.width
       height: Style.space(48)

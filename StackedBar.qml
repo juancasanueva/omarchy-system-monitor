@@ -1,5 +1,4 @@
 import QtQuick
-import "Model.js" as Model
 
 // Horizontal bar of adjacent segments inside a rounded track
 // (Components/StackedBar.swift). Segments are { fraction, color }.
@@ -7,6 +6,7 @@ Canvas {
   id: root
 
   property var segments: []
+  property color trackColor: "gray"
 
   onSegmentsChanged: requestPaint()
   onWidthChanged: requestPaint()
@@ -22,8 +22,7 @@ Canvas {
     ctx.roundedRect(0, 0, width, height, r, r)
     ctx.clip()
 
-    var track = Model.palette.textSecondary
-    ctx.fillStyle = Qt.alpha(track, 0.18)
+    ctx.fillStyle = Qt.alpha(root.trackColor, 0.18)
     ctx.fillRect(0, 0, width, height)
 
     var x = 0

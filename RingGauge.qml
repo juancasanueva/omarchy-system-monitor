@@ -1,6 +1,5 @@
 import QtQuick
 import qs.Commons
-import "Model.js" as Model
 
 // Ring gauge with the value and a caption in the middle
 // (Components/RingGauge.swift): 84 px across, 8 px stroke, faint track.
@@ -12,6 +11,8 @@ Item {
   property string valueText: ""
   property string subtitle: ""
   property string fontFamily: Style.font.family
+  property color textColor: "white"
+  property color subtitleColor: "gray"
 
   readonly property real lineWidth: Style.space(8)
   property real shownFraction: Math.max(0, Math.min(1, isFinite(fraction) ? fraction : 0))
@@ -60,7 +61,7 @@ Item {
       anchors.horizontalCenter: parent.horizontalCenter
       textFormat: Text.PlainText
       text: root.valueText
-      color: Model.palette.textPrimary
+      color: root.textColor
       font.family: root.fontFamily
       font.pixelSize: Style.space(16)
       font.bold: true
@@ -70,7 +71,7 @@ Item {
       anchors.horizontalCenter: parent.horizontalCenter
       textFormat: Text.PlainText
       text: root.subtitle
-      color: Model.palette.textSecondary
+      color: root.subtitleColor
       font.family: root.fontFamily
       font.pixelSize: Style.space(11)
     }

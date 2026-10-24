@@ -13,24 +13,63 @@
 //   /sys/block/zram0/mm_stat           compressed swap held in RAM
 //   /sys/devices/cpu_{core,atom}/cpus  Intel hybrid P/E core topology
 // Disk capacity comes from `df` (see Panel.qml) because statvfs has no procfs file.
+// Colours come from the current Omarchy theme's colors.toml.
 
-// Palette from the macOS app (Presentation/Theme/Palette.swift).
-var palette = {
-  panelBackground: "#0F1522",
-  cardBackground: "#1A2131",
-  textPrimary: "#F2F4F8",
-  textSecondary: "#8A93A6",
-  cpuAccent: "#4D8DFF",
-  cpuEfficiency: "#3FC1C9",
-  memAccent: "#F5A623",
-  memWired: "#E5484D",
-  memCompressed: "#F5D90A",
-  memCached: "#4D8DFF",
-  memFree: "#3DD68C",
-  diskAccent: "#3DD68C",
-  networkAccent: "#C659E4",
-  networkDownload: "#3DD68C",
-  networkUpload: "#4D8DFF"
+// --- Theme -----------------------------------------------------------------
+
+var THEME_MAX = 65536
+
+// The six ANSI hues a theme defines, by name or by terminal slot.
+var ANSI = {
+  red: "color1", green: "color2", yellow: "color3",
+  blue: "color4", magenta: "color5", cyan: "color6"
+}
+
+// Base ANSI colours of an Omarchy colors.toml as "#rrggbb" strings. Named keys
+// win over numbered ones; bright variants are ignored.
+function parseThemeColors(text) {
+  var named = Object.create(null)
+  var numbered = Object.create(null)
+  if (text === undefined || text === null) return named
+  var s = String(text)
+  if (s.length > THEME_MAX) return named
+  var rows = s.split("\n")
+  for (var i = 0; i < rows.length; i++) {
+    var m = /^\s*([a-z0-9_]{1,24})\s*=\s*["']?(#[0-9A-Fa-f]{6})\b/.exec(rows[i])
+    if (m) (/^color\d/.test(m[1]) ? numbered : named)[m[1]] = m[2]
+  }
+  var out = Object.create(null)
+  for (var hue in ANSI) {
+    var value = named[hue] || numbered[ANSI[hue]]
+    if (value) out[hue] = value
+  }
+  return out
+}
+
+// Colour roles of the macOS app (Presentation/Theme/Palette.swift), assigned
+// from the theme. `shell` holds the shell's own roles: foreground, background,
+// accent, urgent, muted, popupBackground, popupText. A theme without ANSI
+// colours falls back to the accent (and urgent for Wired).
+function themePalette(colors, shell) {
+  function hue(name, fallback) { return colors[name] || fallback }
+  var blue = hue("blue", shell.accent)
+  var green = hue("green", shell.accent)
+  var magenta = hue("magenta", shell.accent)
+  return {
+    panelBackground: shell.popupBackground,
+    textPrimary: shell.popupText,
+    cpuAccent: blue,
+    cpuEfficiency: hue("cyan", shell.accent),
+    memAccent: hue("yellow", shell.accent),
+    memWired: hue("red", shell.urgent),
+    memCompressed: magenta,
+    memCached: blue,
+    memFree: green,
+    diskAccent: green,
+    networkAccent: magenta,
+    networkDownload: green,
+    networkUpload: blue
+  }
 }
 
 // Nerd Font glyphs standing in for the SF Symbols of the macOS app.
@@ -183,7 +222,7 @@ function parseCpuList(text) {
 
 // Core bar groups, as CPUCardModel.groups: P-Cores and E-Cores on a hybrid
 // CPU, otherwise one "Cores" group.
-function coreGroups(cores) {
+function coreGroups(cores, pal) {
   if (!cores || cores.length === 0) return []
   var perf = []
   var eff = []
@@ -192,11 +231,11 @@ function coreGroups(cores) {
     else if (cores[i].level === "efficiency") eff.push(cores[i])
   }
   if (perf.length === 0 && eff.length === 0) {
-    return [{ title: "Cores", cores: cores, color: palette.cpuAccent }]
+    return [{ title: "Cores", cores: cores, color: pal.cpuAccent }]
   }
   var groups = []
-  if (perf.length > 0) groups.push({ title: "P-Cores", cores: perf, color: palette.cpuAccent })
-  if (eff.length > 0) groups.push({ title: "E-Cores", cores: eff, color: palette.cpuEfficiency })
+  if (perf.length > 0) groups.push({ title: "P-Cores", cores: perf, color: pal.cpuAccent })
+  if (eff.length > 0) groups.push({ title: "E-Cores", cores: eff, color: pal.cpuEfficiency })
   return groups
 }
 
@@ -206,16 +245,16 @@ function chunk(items, size) {
   return rows
 }
 
-function cpuRows(usage, dp) {
+function cpuRows(usage, dp, pal) {
   var rows = [
-    { key: "User", value: percent1(usage ? usage.user : 0, dp), color: palette.textPrimary },
-    { key: "System", value: percent1(usage ? usage.system : 0, dp), color: palette.textPrimary }
+    { key: "User", value: percent1(usage ? usage.user : 0, dp), color: pal.textPrimary },
+    { key: "System", value: percent1(usage ? usage.system : 0, dp), color: pal.textPrimary }
   ]
   if (usage && usage.performanceAverage !== null) {
-    rows.push({ key: "P-Cores", value: percent1(usage.performanceAverage, dp), color: palette.cpuAccent })
+    rows.push({ key: "P-Cores", value: percent1(usage.performanceAverage, dp), color: pal.cpuAccent })
   }
   if (usage && usage.efficiencyAverage !== null) {
-    rows.push({ key: "E-Cores", value: percent1(usage.efficiencyAverage, dp), color: palette.cpuEfficiency })
+    rows.push({ key: "E-Cores", value: percent1(usage.efficiencyAverage, dp), color: pal.cpuEfficiency })
   }
   return rows
 }
@@ -266,19 +305,19 @@ function memorySnapshot(info, zramBytes) {
   }
 }
 
-function memoryColor(kind) {
+function memoryColor(kind, pal) {
   switch (kind) {
-  case "wired": return palette.memWired
-  case "compressed": return palette.memCompressed
-  case "cached": return palette.memCached
-  case "free": return palette.memFree
-  default: return palette.memAccent
+  case "wired": return pal.memWired
+  case "compressed": return pal.memCompressed
+  case "cached": return pal.memCached
+  case "free": return pal.memFree
+  default: return pal.memAccent
   }
 }
 
 // Stacked bar segments, as MemoryCardModel.segments. Whatever the named kinds
 // do not explain is drawn in the App colour, like the macOS unattributed part.
-function memorySegments(m) {
+function memorySegments(m, pal) {
   if (!m || !(m.total > 0)) return []
   var named = m.app + m.wired + m.compressed + m.cached + m.free
   var unattributed = Math.max(0, m.total - named)
@@ -289,18 +328,20 @@ function memorySegments(m) {
   ]
   var out = []
   for (var i = 0; i < parts.length; i++) {
-    out.push({ kind: parts[i][0], bytes: parts[i][1], fraction: parts[i][1] / whole, color: memoryColor(parts[i][0]) })
+    out.push({ kind: parts[i][0], bytes: parts[i][1], fraction: parts[i][1] / whole, color: memoryColor(parts[i][0], pal) })
   }
   return out
 }
 
-var memoryLegend = [
-  { label: "App", color: palette.memAccent },
-  { label: "Wired", color: palette.memWired },
-  { label: "Compressed", color: palette.memCompressed },
-  { label: "Cached", color: palette.memCached },
-  { label: "Free", color: palette.memFree }
-]
+function memoryLegend(pal) {
+  return [
+    { label: "App", color: pal.memAccent },
+    { label: "Wired", color: pal.memWired },
+    { label: "Compressed", color: pal.memCompressed },
+    { label: "Cached", color: pal.memCached },
+    { label: "Free", color: pal.memFree }
+  ]
+}
 
 function memoryRows(m, dp) {
   return [

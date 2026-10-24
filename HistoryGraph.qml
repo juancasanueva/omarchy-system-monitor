@@ -8,13 +8,14 @@ Item {
 
   property var series: []
   property int capacity: Model.GRAPH_SAMPLES
+  property color baselineColor: "gray"
 
   Rectangle {
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.bottom: parent.bottom
     height: 1
-    color: Qt.alpha(Model.palette.textSecondary, 0.25)
+    color: Qt.alpha(root.baselineColor, 0.25)
   }
 
   Repeater {
