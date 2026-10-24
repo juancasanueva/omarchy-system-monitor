@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
@@ -139,6 +140,16 @@ Panel {
     root.netCounters = net
   }
 
+  // Omarchy's TUI launcher: focuses a running btop or opens one in the default
+  // terminal. The plugin's own app id keeps the window out of Omarchy's float
+  // rule for org.omarchy.btop, so it tiles. Fixed argv, no shell.
+  readonly property string btopAppId: "io.github.juancasanueva.btop"
+
+  function openBtop() {
+    root.close()
+    Quickshell.execDetached(["/usr/bin/omarchy-launch-or-focus-tui", "--app-id=" + root.btopAppId, "btop"])
+  }
+
   function refreshDisk() {
     if (!dfProcess.running) dfProcess.running = true
   }
@@ -237,8 +248,11 @@ Panel {
     hasVisualContent: root.barModules.length > 0
     fixedWidth: vertical ? -1 : barCard.width + Style.space(8)
     fixedHeight: vertical ? barColumn.implicitHeight + Style.space(12) : -1
-    tooltipText: Model.tooltip(root.cpu, root.memory, root.dp) + "\nClick for details"
-    onPressed: function(b) { root.toggle() }
+    tooltipText: Model.tooltip(root.cpu, root.memory, root.dp) + "\nClick for details · Right-click: btop"
+    onPressed: function(b) {
+      if (b === Qt.RightButton) root.openBtop()
+      else root.toggle()
+    }
 
     // Card behind the modules, like the macOS status item.
     Rectangle {
@@ -390,6 +404,47 @@ Panel {
             id: cards
             width: parent.width
             spacing: Style.space(12)
+
+            Rectangle {
+              id: btopButton
+              width: cards.width
+              height: btopLabel.implicitHeight + Style.space(20)
+              radius: Style.space(12)
+              color: btopMouse.containsMouse ? Qt.alpha(root.pal.textPrimary, 0.10) : root.pal.cardBackground
+
+              Row {
+                anchors.centerIn: parent
+                spacing: Style.space(6)
+
+                Text {
+                  textFormat: Text.PlainText
+                  text: Model.glyphs.activity
+                  color: root.pal.cpuAccent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.space(15)
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Text {
+                  id: btopLabel
+                  textFormat: Text.PlainText
+                  text: "Open btop"
+                  color: root.pal.textPrimary
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.space(13)
+                  font.weight: Font.DemiBold
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+              }
+
+              MouseArea {
+                id: btopMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.openBtop()
+              }
+            }
 
             CpuCard { width: cards.width }
             MemoryCard { width: cards.width }

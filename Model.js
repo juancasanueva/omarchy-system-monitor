@@ -81,7 +81,8 @@ var glyphs = {
   read: String.fromCodePoint(0xF0965),      // md-file_download
   write: String.fromCodePoint(0xF0A4D),     // md-file_upload
   download: String.fromCodePoint(0xF0047),  // md-arrow_down_bold_circle
-  upload: String.fromCodePoint(0xF005F)     // md-arrow_up_bold_circle
+  upload: String.fromCodePoint(0xF005F),    // md-arrow_up_bold_circle
+  activity: String.fromCodePoint(0xF0128)   // md-chart_line
 }
 
 var BAR_SAMPLES = 60

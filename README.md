@@ -11,6 +11,7 @@ CPU and memory with live sparklines in the Omarchy bar, and a panel with CPU, Me
 - **Memory**: usage ring, Used, Total, Wired and Compressed, a stacked bar (App, Wired, Compressed, Cached, Free) with its legend, and a history graph.
 - **Disk**: usage ring for `/`, Used, Free and Total, and read and write throughput.
 - **Network**: download and upload rates, totals since boot, and a shared-scale graph of both.
+- **btop**: right-click the widget, or use **Open btop** at the top of the panel, to open btop in your terminal as a tiled window. If btop is already open from the widget, its window is focused instead. It uses Omarchy's TUI launcher with its own app id (`io.github.juancasanueva.btop`), so Omarchy's float rule for Super+Ctrl+T btop does not apply.
 
 The widget samples every 2 seconds, or every second while the panel is open. Disk capacity refreshes every 30 seconds and whenever the panel opens.
 
@@ -57,11 +58,11 @@ Settings, in the widget's `shell.json` entry or under Setup > Bar:
 | `showCpu` | `true` | Show the CPU module in the bar |
 | `showMemory` | `true` | Show the MEM module in the bar |
 
-Click the widget, or run `omarchy-shell juancasanueva.system-monitor toggle`, to open the panel. Esc closes it.
+Click the widget, or run `omarchy-shell juancasanueva.system-monitor toggle`, to open the panel. Esc closes it. Right-click the widget to open btop.
 
 ## Privacy and side effects
 
-The plugin only reads kernel files under `/proc` and `/sys`, the current theme's `colors.toml`, and runs `/usr/bin/df` with a fixed argument list. It makes no network requests, writes no files and stores no state. History lives in memory and resets when the shell restarts.
+The plugin only reads kernel files under `/proc` and `/sys`, the current theme's `colors.toml`, and runs `/usr/bin/df` with a fixed argument list. Opening btop runs `/usr/bin/omarchy-launch-or-focus-tui --app-id=io.github.juancasanueva.btop btop`, which ships with Omarchy, and only when you ask for it. It makes no network requests, writes no files and stores no state. History lives in memory and resets when the shell restarts.
 
 ## Removing
 
