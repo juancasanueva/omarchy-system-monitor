@@ -2,17 +2,17 @@
   "schemaVersion": 1,
   "id": "juancasanueva.system-monitor",
   "name": "System Monitor",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "author": "Juan Casanueva",
   "license": "MIT",
-  "description": "CPU and memory sparklines in the bar, with a panel of CPU, Memory, Disk and Network cards. A port of the macOS System Monitor menu bar app.",
+  "description": "CPU and memory sparklines in the bar, with a panel of CPU, GPU, Memory, Disk and Network cards. A port of the macOS System Monitor menu bar app.",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "Panel.qml"
   },
   "barWidget": {
     "displayName": "System Monitor",
-    "description": "CPU and memory with live sparklines. Click for the CPU, Memory, Disk and Network panel.",
+    "description": "CPU and memory with live sparklines. Click for the CPU, GPU, Memory, Disk and Network panel.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",
