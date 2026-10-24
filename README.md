@@ -2,7 +2,7 @@
 
 CPU and memory with live sparklines in the Omarchy bar, and a panel with CPU, Memory, Disk and Network cards. A port of the macOS menu bar app [SWIFTUI_system_monitor](https://github.com/juancasanueva/SWIFTUI_system_monitor), with the same layout and number formats, coloured by your current Omarchy theme.
 
-<p align="center"><img src="preview.png?v=2" alt="System Monitor panel: CPU, Memory, Disk and Network cards" width="360"></p>
+<p align="center"><img src="preview.png?v=3" alt="System Monitor panel: CPU, Memory, Disk and Network cards" width="360"></p>
 
 ## What it shows
 
