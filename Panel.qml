@@ -256,6 +256,8 @@ Panel {
   // Omarchy's TUI launcher: focuses a running btop or opens one in the default
   // terminal. The plugin's own app id keeps the window out of Omarchy's float
   // rule for org.omarchy.btop, so it tiles. Fixed argv, no shell.
+  // How long df and nvidia-smi may run before they are killed.
+  readonly property int processTimeoutMs: 5000
   readonly property string btopAppId: "io.github.juancasanueva.btop"
 
   function openBtop() {
@@ -343,7 +345,8 @@ Panel {
   }
 
   // statvfs has no procfs file, so capacity comes from df. Fixed argv, no
-  // shell, and the output is capped at 4 KiB while it streams.
+  // shell, the output is capped at 4 KiB while it streams, and a run is killed
+  // after 5 seconds.
   Process {
     id: dfProcess
     property string buffer: ""
@@ -353,7 +356,7 @@ Panel {
     command: ["/usr/bin/df", "-B1", "--output=size,used,avail", "--", "/"]
     environment: ({ LC_ALL: "C" })
 
-    onStarted: { buffer = ""; overflow = false }
+    onStarted: { buffer = ""; overflow = false; dfDeadline.restart() }
 
     stdout: SplitParser {
       splitMarker: ""
@@ -370,6 +373,7 @@ Panel {
     }
 
     onExited: function(code) {
+      dfDeadline.stop()
       if (code === 0 && !overflow) {
         var parsed = Model.parseDf(buffer)
         if (parsed) root.disk = parsed
@@ -378,9 +382,17 @@ Panel {
     }
   }
 
+  Timer {
+    id: dfDeadline
+    interval: root.processTimeoutMs
+    onTriggered: if (dfProcess.running) dfProcess.signal(9)
+  }
+
   // NVIDIA's proprietary driver keeps its readings out of sysfs; nvidia-smi
   // reports the followed card by its PCI slot. Fixed argv, no shell, output
-  // capped at 4 KiB. Without nvidia-smi the card shows with no readings.
+  // capped at 4 KiB, and a run is killed after 5 seconds, so a hung driver
+  // shows no readings instead of frozen ones. Without nvidia-smi the card
+  // shows with no readings.
   Process {
     id: nvidiaProcess
     property string buffer: ""
@@ -390,7 +402,7 @@ Panel {
     command: ["/usr/bin/nvidia-smi", "--query-gpu=" + Model.NVIDIA_QUERY, "--format=csv,noheader,nounits", "--id=" + root.gpuSlot]
     environment: ({ LC_ALL: "C" })
 
-    onStarted: { buffer = ""; overflow = false }
+    onStarted: { buffer = ""; overflow = false; nvidiaDeadline.restart() }
 
     stdout: SplitParser {
       splitMarker: ""
@@ -407,10 +419,17 @@ Panel {
     }
 
     onExited: function(code) {
+      nvidiaDeadline.stop()
       var parsed = code === 0 && !overflow ? Model.nvidiaSnapshot(buffer) : null
       root.setGpu(parsed || Model.emptyGpu())
       buffer = ""
     }
+  }
+
+  Timer {
+    id: nvidiaDeadline
+    interval: root.processTimeoutMs
+    onTriggered: if (nvidiaProcess.running) nvidiaProcess.signal(9)
   }
 
   Component.onDestruction: {
