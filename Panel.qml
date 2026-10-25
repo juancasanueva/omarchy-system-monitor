@@ -18,7 +18,7 @@ Panel {
   readonly property bool showCpu: setting("showCpu", true) !== false
   readonly property bool showMemory: setting("showMemory", true) !== false
   readonly property bool showGpu: setting("showGpu", true) !== false
-  readonly property var barModules: Model.barModules(root.showCpu, root.showMemory, root.showGpu, root.gpu !== null)
+  readonly property var barModules: Model.barModules(root.showCpu, root.showMemory, root.showGpu, root.hasGpu)
 
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
   readonly property string dp: Qt.locale().decimalPoint
@@ -72,8 +72,13 @@ Panel {
   property var cpuHistory: []
   property var cpuTemperature: null
   property string cpuName: ""
+  property string gpuKind: ""
+  property string gpuCard: ""
   property string gpuDevice: ""
   property string gpuHwmon: ""
+  property string gpuSlot: ""
+  property var gpuFileList: []
+  readonly property bool hasGpu: root.gpuDevice !== ""
   property string gpuName: ""
   property var gpu: null
   property var gpuHistory: []
@@ -115,24 +120,57 @@ Panel {
     }
   }
 
-  // The first DRM card with gpu_busy_percent is an amdgpu GPU; its hwmon sits
-  // under the same device, so readings never mix two GPUs.
+  // Every DRM card whose driver the widget knows is a candidate; the
+  // discrete one with the most VRAM, then the display card, is followed. Its hwmon sits under the same
+  // device, so readings never mix two GPUs.
   function findGpu() {
+    var candidates = []
     for (var i = 0; i < Model.MAX_GPU_CARDS; i++) {
-      var device = "/sys/class/drm/card" + i + "/device"
-      hwmonNameFile.path = device + "/gpu_busy_percent"
-      if (Model.parseInteger(readText(hwmonNameFile)) === null) continue
-      for (var j = 0; j < Model.MAX_HWMON; j++) {
-        hwmonNameFile.path = device + "/hwmon/hwmon" + j + "/name"
-        if (readText(hwmonNameFile).trim() === "amdgpu") {
-          root.gpuHwmon = device + "/hwmon/hwmon" + j
-          break
-        }
-      }
-      root.gpuDevice = device
-      root.gpuName = readGpuName(device)
-      return
+      var card = "/sys/class/drm/card" + i
+      hwmonNameFile.path = card + "/device/uevent"
+      var uevent = Model.parseUevent(readText(hwmonNameFile))
+      var kind = Model.gpuKind(uevent.driver)
+      if (!kind) continue
+      hwmonNameFile.path = card + "/device/mem_info_vram_total"
+      var vramTotal = Model.parseInteger(readText(hwmonNameFile)) || 0
+      hwmonNameFile.path = card + "/device/boot_vga"
+      var bootVga = Model.parseInteger(readText(hwmonNameFile)) === 1
+      candidates.push({ index: i, kind: kind, slot: uevent.slot, vramTotal: vramTotal, bootVga: bootVga })
     }
+    var pick = Model.pickGpu(candidates)
+    if (!pick) return
+    var card = "/sys/class/drm/card" + pick.index
+    var device = card + "/device"
+    for (var j = 0; j < Model.MAX_HWMON; j++) {
+      hwmonNameFile.path = device + "/hwmon/hwmon" + j + "/name"
+      if (Model.isGpuHwmon(pick.kind, readText(hwmonNameFile))) {
+        root.gpuHwmon = device + "/hwmon/hwmon" + j
+        break
+      }
+    }
+    root.gpuKind = pick.kind
+    root.gpuCard = card
+    root.gpuSlot = pick.slot
+    root.gpuDevice = device
+    root.gpuName = readGpuName(device)
+    root.gpuFileList = readableGpuFiles()
+  }
+
+  // Files the card cannot report (gpu_busy_percent on a Tahiti, say) fail on
+  // every read and log each failure, so they are dropped once at startup. A
+  // card asleep at startup keeps them all: its readings cannot be told apart.
+  function readableGpuFiles() {
+    var list = Model.gpuFiles(root.gpuKind)
+    hwmonNameFile.path = root.gpuDevice + "/power/runtime_status"
+    if (Model.gpuAsleep(readText(hwmonNameFile))) return list
+    var out = []
+    for (var i = 0; i < list.length; i++) {
+      var path = gpuFilePath(list[i])
+      if (path === "") continue
+      hwmonNameFile.path = path
+      if (readText(hwmonNameFile) !== "") out.push(list[i])
+    }
+    return out
   }
 
   // pci.ids is read once and released; its text is not kept.
@@ -150,19 +188,27 @@ Panel {
   }
 
   function gpuFilePath(file) {
-    var dir = file[1] === "device" ? root.gpuDevice : root.gpuHwmon
+    var dir = file[1] === "device" ? root.gpuDevice : (file[1] === "card" ? root.gpuCard : root.gpuHwmon)
     return dir === "" ? "" : dir + "/" + file[2]
   }
 
-  function sampleGpu() {
-    var files = {}
-    for (var i = 0; i < gpuFiles.count; i++) {
-      var view = gpuFiles.objectAt(i)
-      files[Model.GPU_FILES[i][0]] = view && view.path !== "" ? readText(view) : ""
-    }
-    var snapshot = Model.gpuSnapshot(files)
+  // The load graph only grows on GPUs that report a load.
+  function setGpu(snapshot) {
     root.gpu = snapshot
-    if (snapshot) root.gpuHistory = Model.pushHistory(root.gpuHistory, snapshot.busy, Model.GRAPH_SAMPLES)
+    if (snapshot.busy !== null) root.gpuHistory = Model.pushHistory(root.gpuHistory, snapshot.busy, Model.GRAPH_SAMPLES)
+  }
+
+  function sampleGpu() {
+    var files = Model.readGpuFiles(root.gpuFileList, function(i) {
+      var view = gpuFiles.objectAt(i)
+      return view && view.path !== "" ? readText(view) : ""
+    })
+    // nvidia-smi wakes a sleeping card, so it only runs while the card is awake.
+    if (root.gpuKind === "nvidia" && !Model.gpuAsleep(files.runtime)) {
+      if (!nvidiaProcess.running) nvidiaProcess.running = true
+      return
+    }
+    setGpu(Model.gpuSnapshot(files))
   }
 
   function sample() {
@@ -244,7 +290,7 @@ Panel {
   // hands the new entry back as `settings`, which moves the bar and switches.
   function setBarSwitch(key, value) {
     if (Model.shown(root.settings, key) === value) return
-    var next = Model.withBarSetting(root.settings, key, value, root.gpu !== null)
+    var next = Model.withBarSetting(root.settings, key, value, root.hasGpu)
     if (!next) {
       root.settingsStatus = "At least one module stays on the bar"
       return
@@ -272,7 +318,7 @@ Panel {
 
   Instantiator {
     id: gpuFiles
-    model: Model.GPU_FILES
+    model: root.gpuFileList
     delegate: FileView {
       required property var modelData
       path: root.gpuFilePath(modelData)
@@ -332,7 +378,45 @@ Panel {
     }
   }
 
-  Component.onDestruction: if (dfProcess.running) dfProcess.signal(9)
+  // NVIDIA's proprietary driver keeps its readings out of sysfs; nvidia-smi
+  // reports the followed card by its PCI slot. Fixed argv, no shell, output
+  // capped at 4 KiB. Without nvidia-smi the card shows with no readings.
+  Process {
+    id: nvidiaProcess
+    property string buffer: ""
+    property bool overflow: false
+    readonly property int maxBytes: 4096
+
+    command: ["/usr/bin/nvidia-smi", "--query-gpu=" + Model.NVIDIA_QUERY, "--format=csv,noheader,nounits", "--id=" + root.gpuSlot]
+    environment: ({ LC_ALL: "C" })
+
+    onStarted: { buffer = ""; overflow = false }
+
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        if (nvidiaProcess.overflow) return
+        if (nvidiaProcess.buffer.length + chunk.length > nvidiaProcess.maxBytes) {
+          nvidiaProcess.overflow = true
+          nvidiaProcess.buffer = ""
+          nvidiaProcess.signal(9)
+          return
+        }
+        nvidiaProcess.buffer += chunk
+      }
+    }
+
+    onExited: function(code) {
+      var parsed = code === 0 && !overflow ? Model.nvidiaSnapshot(buffer) : null
+      root.setGpu(parsed || Model.emptyGpu())
+      buffer = ""
+    }
+  }
+
+  Component.onDestruction: {
+    if (dfProcess.running) dfProcess.signal(9)
+    if (nvidiaProcess.running) nvidiaProcess.signal(9)
+  }
 
   // --- bar -------------------------------------------------------------------
 
@@ -346,8 +430,12 @@ Panel {
   }
   function moduleFraction(module) {
     if (module === "cpu") return root.cpu ? root.cpu.total : 0
-    if (module === "gpu") return root.gpu ? root.gpu.busy : 0
+    if (module === "gpu") return root.gpu && root.gpu.busy !== null ? root.gpu.busy : 0
     return root.memory ? root.memory.fraction : 0
+  }
+  function moduleValue(module) {
+    if (module === "gpu") return Model.gpuLoadText(root.gpu, root.dp, true)
+    return Model.percentInt(root.moduleFraction(module))
   }
   function moduleSamples(module) {
     var history = module === "cpu" ? root.cpuHistory : (module === "gpu" ? root.gpuHistory : root.memoryHistory)
@@ -415,7 +503,7 @@ Panel {
               width: widest.implicitWidth
               horizontalAlignment: Text.AlignRight
               textFormat: Text.PlainText
-              text: Model.percentInt(root.moduleFraction(moduleRow.modelData))
+              text: root.moduleValue(moduleRow.modelData)
               color: root.barForeground
               font.family: root.fontFamily
               font.pixelSize: Style.space(11)
@@ -471,7 +559,7 @@ Panel {
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
             textFormat: Text.PlainText
-            text: Model.percentInt(root.moduleFraction(parent.modelData))
+            text: root.moduleValue(parent.modelData)
             color: root.barForeground
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -595,7 +683,7 @@ Panel {
 
             SettingsCard { width: cards.width; visible: root.settingsOpen }
             CpuCard { width: cards.width; visible: !root.settingsOpen }
-            GpuCard { width: cards.width; visible: !root.settingsOpen && root.gpu !== null }
+            GpuCard { width: cards.width; visible: !root.settingsOpen && root.hasGpu }
             MemoryCard { width: cards.width; visible: !root.settingsOpen }
             DiskCard { width: cards.width; visible: !root.settingsOpen }
             NetworkCard { width: cards.width; visible: !root.settingsOpen }
@@ -822,7 +910,7 @@ Panel {
     CardHeader { width: parent.width; glyph: Model.glyphs.settings; title: "Bar"; detail: "Modules shown in the bar"; accent: root.pal.cpuAccent }
 
     Repeater {
-      model: Model.barSwitches(root.settings, root.gpu !== null)
+      model: Model.barSwitches(root.settings, root.hasGpu)
 
       Item {
         required property var modelData
@@ -915,9 +1003,9 @@ Panel {
 
     GaugeAndRows {
       width: parent.width
-      fraction: root.gpu ? root.gpu.busy : 0
+      fraction: root.moduleFraction("gpu")
       accent: root.pal.gpuAccent
-      valueText: Model.percent1(root.gpu ? root.gpu.busy : 0, root.dp)
+      valueText: Model.gpuLoadText(root.gpu, root.dp, false)
       subtitle: "GPU"
       rows: Model.gpuRows(root.gpu, root.dp, root.pal)
     }
@@ -946,6 +1034,7 @@ Panel {
     }
 
     HistoryGraph {
+      visible: root.gpuHistory.length > 0
       baselineColor: root.pal.textSecondary
       width: parent.width
       height: Style.space(48)

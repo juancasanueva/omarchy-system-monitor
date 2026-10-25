@@ -6,9 +6,9 @@ CPU, GPU and memory with live sparklines in the Omarchy bar, and a panel with CP
 
 ## What it shows
 
-- **Bar**: `CPU 12% ▁▂▃` `|` `GPU 16% ▁▁▂` `|` `MEM 59% ▃▃▄` on a small card. The GPU module appears only on AMD GPUs. Each value has a fixed width, so the bar never shifts. The last 60 samples feed each sparkline.
+- **Bar**: `CPU 12% ▁▂▃` `|` `GPU 16% ▁▁▂` `|` `MEM 59% ▃▃▄` on a small card. The GPU module appears when a GPU is found, and shows `—` on GPUs that report no load. Each value has a fixed width, so the bar never shifts. The last 60 samples feed each sparkline.
 - **CPU**: the CPU's model in the header, total usage ring, User, System and package temperature, a two-minute history graph, and one bar per logical core. On Intel hybrid CPUs, P-Cores and E-Cores are shown as separate groups with their own averages.
-- **GPU**: the GPU's name in the header, load ring, temperature, power draw and core clock (plus memory busy, memory clock and voltage where the GPU reports them), VRAM and shared memory with a usage bar each, and a history graph. AMD GPUs (`amdgpu` driver) only; the card is hidden on other GPUs.
+- **GPU**: the GPU's name in the header, load ring, temperature, power draw and core clock (plus memory busy, memory clock and voltage where the GPU reports them), VRAM and shared memory with a usage bar each, and a history graph. AMD (`amdgpu`, `radeon`), NVIDIA (proprietary driver through `nvidia-smi`, or `nouveau`) and Intel (`i915`, `xe`) GPUs. Readings a GPU does not report are hidden; where it has no load counter (Intel, `nouveau`, AMD cards older than Sea Islands such as Tahiti) the ring shows `—` and the graph is hidden. A card in runtime suspend shows as Asleep and is not woken. With several GPUs, the widget follows NVIDIA before AMD before Intel, then the card with the most VRAM, then the one driving the display at boot.
 - **Memory**: usage ring, Used, Total, Wired and Compressed, a stacked bar (App, Wired, Compressed, Cached, Free) with its legend, and a history graph.
 - **Disk**: usage ring for `/`, Used, Free and Total, and read and write throughput.
 - **Network**: download and upload rates, totals since boot, and a shared-scale graph of both.
@@ -41,9 +41,10 @@ If a theme defines none of these, its accent colour is used (and its urgent colo
 | Temperature | `temp1_input` of the first `/sys/class/hwmon` sensor whose driver is `k10temp`, `zenpower`, `coretemp` or `cpu_thermal`. The row is hidden when none is found. |
 | P-Cores / E-Cores | `/sys/devices/cpu_core/cpus` and `/sys/devices/cpu_atom/cpus`. If they are missing, all cores are shown in one "Cores" group. |
 | GPU name | amdgpu's `product_name` (dedicated cards), otherwise the device's entry in `/usr/share/hwdata/pci.ids`, read once at startup |
-| GPU load, Memory busy | `gpu_busy_percent` and `mem_busy_percent` of the first `/sys/class/drm/card*/device` that has them |
+| GPU | The `/sys/class/drm/card*` whose `device/uevent` driver is `amdgpu`, `radeon`, `nvidia`, `nouveau`, `i915` or `xe`, picked once at startup |
+| GPU load, Memory busy | AMD: `gpu_busy_percent` and `mem_busy_percent`. NVIDIA: `nvidia-smi --query-gpu` for the card's PCI slot, run only while `power/runtime_status` is not `suspended`. |
 | VRAM, Shared | `mem_info_vram_{used,total}` and `mem_info_gtt_{used,total}`. Shared is GTT: system RAM the GPU maps, which is most of its memory on an integrated GPU. |
-| GPU Temperature, Power, clocks, Voltage | The card's own `amdgpu` hwmon: `temp1_input` (edge), `power1_average` or `power1_input`, `freq1_input` (core) and `freq2_input` (memory), `in0_input` (vddgfx). Rows without a reading are hidden. |
+| GPU Temperature, Power, clocks, Voltage | NVIDIA: `nvidia-smi`. Intel: `gt_cur_freq_mhz` (i915) or `tile0/gt0/freq0/act_freq` (xe), plus the `i915`/`xe` hwmon. `nouveau`: its hwmon. AMD: the card's own `amdgpu` hwmon: `temp1_input` (edge), `power1_average` or `power1_input`, `freq1_input` (core) and `freq2_input` (memory), `in0_input` (vddgfx). Rows without a reading are hidden. |
 | Memory Used | `MemTotal - MemAvailable` |
 | App | `AnonPages + Shmem` |
 | Wired | `SUnreclaim + KernelStack + PageTables` (kernel memory that cannot be reclaimed) |
@@ -65,7 +66,7 @@ Settings: click the gear next to **Open btop** in the panel and switch CPU, GPU 
 | --- | --- | --- |
 | `showCpu` | `true` | Show the CPU module in the bar |
 | `showMemory` | `true` | Show the MEM module in the bar |
-| `showGpu` | `true` | Show the GPU module in the bar (AMD GPUs only; it never appears without one) |
+| `showGpu` | `true` | Show the GPU module in the bar (it never appears without a GPU) |
 
 Click the widget, or run `omarchy-shell juancasanueva.system-monitor toggle`, to open the panel. Esc closes it. Right-click the widget to open btop.
 
