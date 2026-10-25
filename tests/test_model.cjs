@@ -370,6 +370,23 @@ test("gpuSnapshot falls back to power1_input and leaves missing readings null", 
   assert.equal(sparse.temperature, null)
 })
 
+test("readGpuFiles reads nothing past power/runtime_status while the card is suspended", () => {
+  const list = M.gpuFiles("amd")
+  const texts = { runtime: "suspended\n", busy: "35\n", temp: "48000\n" }
+  const read = []
+  const files = M.readGpuFiles(list, (i) => { read.push(list[i][0]); return texts[list[i][0]] || "" })
+  assert.deepEqual(read, ["runtime"])
+  assert.equal(M.gpuSnapshot(files).asleep, true)
+})
+
+test("readGpuFiles reads every file while the card is awake", () => {
+  const list = M.gpuFiles("amd")
+  const read = []
+  const files = M.readGpuFiles(list, (i) => { read.push(list[i][0]); return list[i][0] === "runtime" ? "active\n" : "35\n" })
+  assert.equal(read.length, list.length)
+  assert.equal(M.gpuSnapshot(files).busy, 0.35)
+})
+
 test("gpuSnapshot reports a runtime-suspended card as idle and asleep", () => {
   const g = M.gpuSnapshot(Object.assign({}, GPU_FILES, { runtime: "suspended\n" }))
   assert.equal(g.busy, 0)

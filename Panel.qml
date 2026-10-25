@@ -199,12 +199,10 @@ Panel {
   }
 
   function sampleGpu() {
-    var list = root.gpuFileList
-    var files = {}
-    for (var i = 0; i < gpuFiles.count; i++) {
+    var files = Model.readGpuFiles(root.gpuFileList, function(i) {
       var view = gpuFiles.objectAt(i)
-      files[list[i][0]] = view && view.path !== "" ? readText(view) : ""
-    }
+      return view && view.path !== "" ? readText(view) : ""
+    })
     // nvidia-smi wakes a sleeping card, so it only runs while the card is awake.
     if (root.gpuKind === "nvidia" && !Model.gpuAsleep(files.runtime)) {
       if (!nvidiaProcess.running) nvidiaProcess.running = true

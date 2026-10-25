@@ -427,6 +427,19 @@ function gpuAsleep(runtimeText) {
   return runtimeText !== undefined && runtimeText !== null && String(runtimeText).trim() === "suspended"
 }
 
+// The card's file texts keyed by role, read in list order through read(i).
+// Reading stops at a suspended power/runtime_status, so the readings after it
+// never wake the card.
+function readGpuFiles(list, read) {
+  var files = {}
+  for (var i = 0; i < list.length; i++) {
+    var text = read(i)
+    files[list[i][0]] = text
+    if (list[i][0] === "runtime" && gpuAsleep(text)) break
+  }
+  return files
+}
+
 function emptyGpu() {
   return {
     busy: null, memBusy: null, vramUsed: null, vramTotal: null, gttUsed: null, gttTotal: null,
