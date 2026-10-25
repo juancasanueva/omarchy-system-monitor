@@ -72,7 +72,7 @@ Click the widget, or run `omarchy-shell juancasanueva.system-monitor toggle`, to
 
 ## Privacy and side effects
 
-The plugin only reads kernel files under `/proc` and `/sys`, the PCI ID database `/usr/share/hwdata/pci.ids`, the current theme's `colors.toml`, and runs `/usr/bin/df` with a fixed argument list. Opening btop runs `/usr/bin/omarchy-launch-or-focus-tui --app-id=io.github.juancasanueva.btop btop`, which ships with Omarchy, and only when you ask for it. It makes no network requests and writes no files of its own. The settings switches save through the shell's own settings API, which rewrites only this widget's entry in `shell.json`. History lives in memory and resets when the shell restarts.
+The plugin only reads kernel files under `/proc` and `/sys`, the PCI ID database `/usr/share/hwdata/pci.ids`, the current theme's `colors.toml`, and runs `/usr/bin/df` (and, on NVIDIA's proprietary driver, `/usr/bin/nvidia-smi`) with a fixed argument list, its output capped at 4 KiB and the run killed after 5 seconds. Opening btop runs `/usr/bin/omarchy-launch-or-focus-tui --app-id=io.github.juancasanueva.btop btop`, which ships with Omarchy, and only when you ask for it. It makes no network requests and writes no files of its own. The settings switches save through the shell's own settings API, which rewrites only this widget's entry in `shell.json`. History lives in memory and resets when the shell restarts.
 
 ## Removing
 
