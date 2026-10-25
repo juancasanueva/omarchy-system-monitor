@@ -354,15 +354,107 @@ test("gpuSnapshot reads the amdgpu sysfs and hwmon files", () => {
   assert.equal(g.vddgfx, null)
 })
 
-test("gpuSnapshot falls back to power1_input and is null without a busy reading", () => {
+test("gpuSnapshot falls back to power1_input and leaves missing readings null", () => {
   near(M.gpuSnapshot(Object.assign({}, GPU_FILES, { powerAverage: "" })).watts, 11.075)
-  assert.equal(M.gpuSnapshot(Object.assign({}, GPU_FILES, { busy: "" })), null)
-  assert.equal(M.gpuSnapshot(Object.assign({}, GPU_FILES, { busy: "abc" })), null)
-  assert.equal(M.gpuSnapshot({}), null)
+  const noLoad = M.gpuSnapshot(Object.assign({}, GPU_FILES, { busy: "" }))
+  assert.equal(noLoad.busy, null)
+  assert.equal(noLoad.vramTotal, 4294967296)
+  assert.equal(M.gpuSnapshot(Object.assign({}, GPU_FILES, { busy: "abc" })).busy, null)
+  const empty = M.gpuSnapshot({})
+  assert.equal(empty.busy, null)
+  assert.equal(empty.temperature, null)
+  assert.equal(empty.asleep, false)
   const sparse = M.gpuSnapshot({ busy: "250" })
   assert.equal(sparse.busy, 1)
   assert.equal(sparse.vramTotal, null)
   assert.equal(sparse.temperature, null)
+})
+
+test("gpuSnapshot reports a runtime-suspended card as idle and asleep", () => {
+  const g = M.gpuSnapshot(Object.assign({}, GPU_FILES, { runtime: "suspended\n" }))
+  assert.equal(g.busy, 0)
+  assert.equal(g.asleep, true)
+  assert.equal(g.temperature, null)
+  assert.equal(M.gpuSnapshot(Object.assign({}, GPU_FILES, { runtime: "active\n" })).asleep, false)
+  assert.deepEqual(Array.from(M.gpuRows(g, ".", PAL), (r) => [r.key, r.value]), [["State", "Asleep"]])
+})
+
+test("gpuSnapshot reads Intel's clock in MHz from i915 or xe", () => {
+  assert.equal(M.gpuSnapshot({ sclkMhz: "1300\n" }).coreMhz, 1300)
+  assert.equal(M.gpuSnapshot({ sclkMhz: "", sclkMhzXe: "950\n" }).coreMhz, 950)
+  assert.equal(M.gpuSnapshot({ sclkMhz: "0" }).coreMhz, null)
+})
+
+test("nvidiaSnapshot reads one nvidia-smi CSV line", () => {
+  const g = M.nvidiaSnapshot("37, 12, 2048, 8192, 61, 45.30, 1830, 7000\n")
+  near(g.busy, 0.37)
+  near(g.memBusy, 0.12)
+  assert.equal(g.vramUsed, 2048 * 1024 * 1024)
+  assert.equal(g.vramTotal, 8192 * 1024 * 1024)
+  assert.equal(g.temperature, 61)
+  near(g.watts, 45.3)
+  assert.equal(g.coreMhz, 1830)
+  assert.equal(g.memoryMhz, 7000)
+  assert.equal(g.gttTotal, null)
+  const na = M.nvidiaSnapshot("5, [N/A], 100, 4096, 40, [N/A], 300, 405")
+  assert.equal(na.memBusy, null)
+  assert.equal(na.watts, null)
+  assert.equal(M.nvidiaSnapshot(""), null)
+  assert.equal(M.nvidiaSnapshot("No devices were found"), null)
+  assert.equal(M.nvidiaSnapshot("1, 2, 3"), null)
+})
+
+test("parseUevent and gpuKind find the card's driver and PCI slot", () => {
+  const u = M.parseUevent("DRIVER=amdgpu\nPCI_CLASS=30000\nPCI_SLOT_NAME=0000:06:00.0\nMODALIAS=pci:v1002\n")
+  assert.equal(u.driver, "amdgpu")
+  assert.equal(u.slot, "0000:06:00.0")
+  assert.equal(M.parseUevent("").driver, "")
+  assert.equal(M.gpuKind("amdgpu"), "amd")
+  assert.equal(M.gpuKind("radeon"), "amd")
+  assert.equal(M.gpuKind("i915"), "intel")
+  assert.equal(M.gpuKind("xe"), "intel")
+  assert.equal(M.gpuKind("nvidia"), "nvidia")
+  assert.equal(M.gpuKind("nouveau"), "nouveau")
+  assert.equal(M.gpuKind("simple-framebuffer"), null)
+  assert.equal(M.gpuKind("__proto__"), null)
+  assert.equal(M.gpuKind(""), null)
+  assert.equal(M.isGpuHwmon("amd", "amdgpu\n"), true)
+  assert.equal(M.isGpuHwmon("intel", "xe"), true)
+  assert.equal(M.isGpuHwmon("amd", "k10temp"), false)
+  assert.equal(M.isGpuHwmon("nvidia", "nvidia"), false)
+})
+
+test("pickGpu prefers a discrete card, then more VRAM, then the display card", () => {
+  const intel = { index: 0, kind: "intel", vramTotal: 0 }
+  const apu = { index: 0, kind: "amd", vramTotal: 512 }
+  const dgpu = { index: 1, kind: "amd", vramTotal: 8192 }
+  const nvidia = { index: 1, kind: "nvidia", vramTotal: 0 }
+  assert.equal(M.pickGpu([intel, nvidia]), nvidia)
+  assert.equal(M.pickGpu([apu, nvidia]), nvidia)
+  assert.equal(M.pickGpu([apu, dgpu]), dgpu)
+  assert.equal(M.pickGpu([intel, dgpu]), dgpu)
+  assert.equal(M.pickGpu([intel]), intel)
+  const twin = { index: 2, kind: "amd", vramTotal: 8192 }
+  assert.equal(M.pickGpu([twin, dgpu]), dgpu)
+  const display = { index: 2, kind: "amd", vramTotal: 8192, bootVga: true }
+  assert.equal(M.pickGpu([dgpu, display]), display)
+  assert.equal(M.pickGpu([display, dgpu]), display)
+  assert.equal(M.pickGpu([apu, Object.assign({}, apu, { index: 1, bootVga: true }), dgpu]), dgpu)
+  assert.equal(M.pickGpu([{ index: 0, kind: "other", vramTotal: 0 }]), null)
+  assert.equal(M.pickGpu([]), null)
+})
+
+test("gpuFiles lists each kind's files, runtime status first", () => {
+  for (const kind of ["amd", "intel", "nouveau", "nvidia"]) assert.equal(M.gpuFiles(kind)[0][0], "runtime")
+  assert.deepEqual(Array.from(M.gpuFiles("")), [])
+  assert.ok(M.gpuFiles("intel").some((f) => f[1] === "card" && f[2] === "gt_cur_freq_mhz"))
+})
+
+test("gpuLoadText shows a dash without a load reading", () => {
+  assert.equal(M.gpuLoadText({ busy: 0.165 }, ",", false), "16,5%")
+  assert.equal(M.gpuLoadText({ busy: 0.165 }, ".", true), "17%")
+  assert.equal(M.gpuLoadText({ busy: null }, ".", true), "—")
+  assert.equal(M.gpuLoadText(null, ".", false), "—")
 })
 
 test("gpuMemory gives VRAM and shared memory with their used fraction", () => {
@@ -374,6 +466,7 @@ test("gpuMemory gives VRAM and shared memory with their used fraction", () => {
   near(rows[0].fraction, 1084268544 / 4294967296)
   near(rows[1].fraction, 79552512 / 14475911168)
   assert.deepEqual(Array.from(M.gpuMemory(M.gpuSnapshot({ busy: "5" }), ".", PAL)), [])
+  assert.deepEqual(Array.from(M.gpuMemory(M.gpuSnapshot({ runtime: "suspended" }), ".", PAL)), [])
   assert.deepEqual(Array.from(M.gpuMemory(null, ".", PAL)), [])
 })
 
@@ -454,6 +547,7 @@ test("tooltip adds the GPU only when there is one", () => {
   assert.equal(M.tooltip(cpu, memory, null, "."), "CPU 12.0% · Memory 50.0%")
   assert.equal(M.tooltip(cpu, memory, { busy: 0.165 }, ","), "CPU 12,0% · GPU 16,5% · Memory 50,0%")
   assert.equal(M.tooltip(null, null, null, "."), "CPU 0.0% · Memory 0.0%")
+  assert.equal(M.tooltip(cpu, memory, { busy: null }, "."), "CPU 12.0% · GPU — · Memory 50.0%")
 })
 
 test("withBarSetting merges one switch into the whole entry", () => {
@@ -485,7 +579,7 @@ test("barSwitches lists CPU, GPU and MEM with their state", () => {
   ])
   const noGpu = M.barSwitches({}, false)
   assert.equal(noGpu[1].enabled, false)
-  assert.equal(noGpu[1].note, "No supported GPU")
+  assert.equal(noGpu[1].note, "No GPU found")
   assert.equal(noGpu[0].note, "")
 })
 

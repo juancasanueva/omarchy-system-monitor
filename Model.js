@@ -14,8 +14,11 @@
 //   /sys/block/zram0/mm_stat           compressed swap held in RAM
 //   /sys/devices/cpu_{core,atom}/cpus  Intel hybrid P/E core topology
 //   /sys/class/hwmon/hwmon*/temp1_input  CPU package temperature
-//   /sys/class/drm/card*/device/       amdgpu load and memory, plus its hwmon
+//   /sys/class/drm/card*/device/       GPU driver, amdgpu load and memory, Intel
+//                                      clock, plus the card's hwmon
 //   /usr/share/hwdata/pci.ids          GPU name when amdgpu has no product_name
+// NVIDIA's proprietary driver has no sysfs readings, so its numbers come from
+// `nvidia-smi` (see Panel.qml).
 // Disk capacity comes from `df` (see Panel.qml) because statvfs has no procfs file.
 // Colours come from the current Omarchy theme's colors.toml.
 
@@ -314,21 +317,98 @@ function cpuRows(usage, dp, pal, celsius) {
 
 var MAX_GPU_CARDS = 8
 
-// The files gpuSnapshot reads: [role, "device" or "hwmon", file name].
-var GPU_FILES = [
-  ["busy", "device", "gpu_busy_percent"],
-  ["memBusy", "device", "mem_busy_percent"],
-  ["vramUsed", "device", "mem_info_vram_used"],
-  ["vramTotal", "device", "mem_info_vram_total"],
-  ["gttUsed", "device", "mem_info_gtt_used"],
-  ["gttTotal", "device", "mem_info_gtt_total"],
-  ["temp", "hwmon", "temp1_input"],
-  ["powerAverage", "hwmon", "power1_average"],
-  ["powerInput", "hwmon", "power1_input"],
-  ["sclk", "hwmon", "freq1_input"],
-  ["mclk", "hwmon", "freq2_input"],
-  ["vddgfx", "hwmon", "in0_input"]
-]
+// DRM drivers the widget reads, by kind. "amd" and "intel" cover the open
+// drivers' sysfs; "nvidia" is the proprietary driver, read through nvidia-smi
+// because it puts nothing in sysfs; "nouveau" only has a hwmon.
+var GPU_DRIVERS = { amdgpu: "amd", radeon: "amd", i915: "intel", xe: "intel", nvidia: "nvidia", nouveau: "nouveau" }
+
+// hwmon driver names that belong to each kind's card.
+var GPU_HWMON = { amd: ["amdgpu", "radeon"], intel: ["i915", "xe"], nouveau: ["nouveau"], nvidia: [] }
+
+function gpuKind(driver) {
+  var name = driver === undefined || driver === null ? "" : String(driver).trim()
+  return Object.prototype.hasOwnProperty.call(GPU_DRIVERS, name) ? GPU_DRIVERS[name] : null
+}
+
+function isGpuHwmon(kind, name) {
+  var names = GPU_HWMON[kind]
+  if (!names || name === undefined || name === null) return false
+  return names.indexOf(String(name).trim()) >= 0
+}
+
+// DRIVER and PCI_SLOT_NAME of a device's uevent file.
+function parseUevent(text) {
+  var out = { driver: "", slot: "" }
+  var rows = lines(text)
+  for (var i = 0; i < rows.length; i++) {
+    var m = /^(DRIVER|PCI_SLOT_NAME)=([A-Za-z0-9_.:-]{1,64})$/.exec(rows[i].trim())
+    if (m) out[m[1] === "DRIVER" ? "driver" : "slot"] = m[2]
+  }
+  return out
+}
+
+// The card the widget follows, from { index, kind, vramTotal, bootVga }
+// candidates: a discrete vendor before an integrated one (NVIDIA, then AMD,
+// then Intel), then the card with more VRAM, so an APU never wins over a
+// discrete card beside it. Between twin cards the one driving the display at
+// boot wins, then the lowest card number.
+var GPU_RANK = { nvidia: 3, amd: 2, nouveau: 2, intel: 1 }
+
+function pickGpu(candidates) {
+  var best = null
+  for (var i = 0; i < candidates.length; i++) {
+    var c = candidates[i]
+    if (!GPU_RANK[c.kind]) continue
+    if (!best) { best = c; continue }
+    var rank = GPU_RANK[c.kind] - GPU_RANK[best.kind]
+    var vram = (c.vramTotal || 0) - (best.vramTotal || 0)
+    var boot = (c.bootVga ? 1 : 0) - (best.bootVga ? 1 : 0)
+    if (rank !== 0) { if (rank > 0) best = c; continue }
+    if (vram !== 0) { if (vram > 0) best = c; continue }
+    if (boot > 0 || (boot === 0 && c.index < best.index)) best = c
+  }
+  return best
+}
+
+// The files each kind reads: [role, "device", "hwmon" or "card", file name].
+// power/runtime_status comes first on every kind so a sleeping card is never
+// woken by the readings after it.
+var GPU_FILES = {
+  amd: [
+    ["runtime", "device", "power/runtime_status"],
+    ["busy", "device", "gpu_busy_percent"],
+    ["memBusy", "device", "mem_busy_percent"],
+    ["vramUsed", "device", "mem_info_vram_used"],
+    ["vramTotal", "device", "mem_info_vram_total"],
+    ["gttUsed", "device", "mem_info_gtt_used"],
+    ["gttTotal", "device", "mem_info_gtt_total"],
+    ["temp", "hwmon", "temp1_input"],
+    ["powerAverage", "hwmon", "power1_average"],
+    ["powerInput", "hwmon", "power1_input"],
+    ["sclk", "hwmon", "freq1_input"],
+    ["mclk", "hwmon", "freq2_input"],
+    ["vddgfx", "hwmon", "in0_input"]
+  ],
+  intel: [
+    ["runtime", "device", "power/runtime_status"],
+    ["sclkMhz", "card", "gt_cur_freq_mhz"],
+    ["sclkMhzXe", "device", "tile0/gt0/freq0/act_freq"],
+    ["temp", "hwmon", "temp1_input"],
+    ["powerInput", "hwmon", "power1_input"]
+  ],
+  nouveau: [
+    ["runtime", "device", "power/runtime_status"],
+    ["temp", "hwmon", "temp1_input"],
+    ["powerInput", "hwmon", "power1_input"]
+  ],
+  nvidia: [
+    ["runtime", "device", "power/runtime_status"]
+  ]
+}
+
+function gpuFiles(kind) {
+  return GPU_FILES[kind] || []
+}
 
 // One whole number from a sysfs file, or null when the file is missing or
 // holds anything else.
@@ -342,32 +422,86 @@ function positive(value) {
   return value !== null && value > 0 ? value : null
 }
 
-// The raw text of the amdgpu files, keyed by role: device/gpu_busy_percent,
-// mem_busy_percent and mem_info_{vram,gtt}_{used,total}, then the card's hwmon
-// temp1 (edge, millidegrees), power1_average or power1_input (microwatts),
-// freq1/freq2 (sclk/mclk, Hz) and in0 (vddgfx, mV). Null without a busy
-// reading, which means the card is not an amdgpu GPU.
+// A runtime-suspended card is idle; reading it would wake it.
+function gpuAsleep(runtimeText) {
+  return runtimeText !== undefined && runtimeText !== null && String(runtimeText).trim() === "suspended"
+}
+
+function emptyGpu() {
+  return {
+    busy: null, memBusy: null, vramUsed: null, vramTotal: null, gttUsed: null, gttTotal: null,
+    temperature: null, watts: null, coreMhz: null, memoryMhz: null, vddgfx: null, asleep: false
+  }
+}
+
+function asleepGpu() {
+  var g = emptyGpu()
+  g.busy = 0
+  g.asleep = true
+  return g
+}
+
+// The raw text of the card's files, keyed by role: amdgpu's
+// gpu_busy_percent, mem_busy_percent and mem_info_{vram,gtt}_{used,total},
+// then the hwmon's temp1 (millidegrees), power1_average or power1_input
+// (microwatts), freq1/freq2 (sclk/mclk, Hz) and in0 (vddgfx, mV), and Intel's
+// current frequency in MHz. A reading the card does not report is null; busy
+// is null on GPUs without a load counter (Intel, nouveau, and AMD cards older
+// than Sea Islands).
 function gpuSnapshot(files) {
+  if (gpuAsleep(files.runtime)) return asleepGpu()
   var busy = parseInteger(files.busy)
-  if (busy === null) return null
   var memBusy = parseInteger(files.memBusy)
   var power = positive(parseInteger(files.powerAverage))
   if (power === null) power = positive(parseInteger(files.powerInput))
   var sclk = positive(parseInteger(files.sclk))
+  var sclkMhz = positive(parseInteger(files.sclkMhz))
+  if (sclkMhz === null) sclkMhz = positive(parseInteger(files.sclkMhzXe))
   var mclk = positive(parseInteger(files.mclk))
-  return {
-    busy: clamp01(busy / 100),
-    memBusy: memBusy === null ? null : clamp01(memBusy / 100),
-    vramUsed: parseInteger(files.vramUsed),
-    vramTotal: positive(parseInteger(files.vramTotal)),
-    gttUsed: parseInteger(files.gttUsed),
-    gttTotal: positive(parseInteger(files.gttTotal)),
-    temperature: parseTemperature(files.temp),
-    watts: power === null ? null : power / 1e6,
-    coreMhz: sclk === null ? null : Math.round(sclk / 1e6),
-    memoryMhz: mclk === null ? null : Math.round(mclk / 1e6),
-    vddgfx: positive(parseInteger(files.vddgfx))
-  }
+  var g = emptyGpu()
+  g.busy = busy === null ? null : clamp01(busy / 100)
+  g.memBusy = memBusy === null ? null : clamp01(memBusy / 100)
+  g.vramUsed = parseInteger(files.vramUsed)
+  g.vramTotal = positive(parseInteger(files.vramTotal))
+  g.gttUsed = parseInteger(files.gttUsed)
+  g.gttTotal = positive(parseInteger(files.gttTotal))
+  g.temperature = parseTemperature(files.temp)
+  g.watts = power === null ? null : power / 1e6
+  g.coreMhz = sclk !== null ? Math.round(sclk / 1e6) : sclkMhz
+  g.memoryMhz = mclk === null ? null : Math.round(mclk / 1e6)
+  g.vddgfx = positive(parseInteger(files.vddgfx))
+  return g
+}
+
+// The nvidia-smi query, in the order nvidiaSnapshot reads it.
+var NVIDIA_QUERY = "utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu,power.draw,clocks.gr,clocks.mem"
+
+function nvidiaNumber(text) {
+  var m = /^\s*(\d{1,9}(?:\.\d{1,6})?)\s*$/.exec(text === undefined ? "" : String(text))
+  return m ? Number(m[1]) : null
+}
+
+// `nvidia-smi --query-gpu=NVIDIA_QUERY --format=csv,noheader,nounits` for one
+// GPU: percentages, MiB, °C, W and MHz. "[N/A]" fields are missing readings.
+// Null when the line is not that output.
+function nvidiaSnapshot(text) {
+  var rows = lines(text)
+  if (rows.length === 0) return null
+  var f = rows[0].split(",")
+  if (f.length !== 8) return null
+  var v = []
+  for (var i = 0; i < f.length; i++) v.push(nvidiaNumber(f[i]))
+  var mib = 1024 * 1024
+  var g = emptyGpu()
+  g.busy = v[0] === null ? null : clamp01(v[0] / 100)
+  g.memBusy = v[1] === null ? null : clamp01(v[1] / 100)
+  g.vramUsed = v[2] === null ? null : v[2] * mib
+  g.vramTotal = positive(v[3]) === null ? null : v[3] * mib
+  g.temperature = v[4] === null ? null : parseTemperature(String(Math.round(v[4] * 1000)))
+  g.watts = positive(v[5])
+  g.coreMhz = positive(v[6]) === null ? null : Math.round(v[6])
+  g.memoryMhz = positive(v[7]) === null ? null : Math.round(v[7])
+  return g
 }
 
 // pci.ids is about 1.6 MB; anything far past that is not the hwdata file.
@@ -425,6 +559,7 @@ function gpuMemory(g, dp, pal) {
 function gpuRows(g, dp, pal) {
   if (!g) return []
   var rows = []
+  if (g.asleep) rows.push({ key: "State", value: "Asleep" })
   if (g.memBusy !== null) rows.push({ key: "Memory busy", value: percent1(g.memBusy, dp) })
   if (g.temperature !== null) rows.push({ key: "Temperature", value: temperature(g.temperature, dp) })
   if (g.watts !== null) rows.push({ key: "Power", value: decimal(g.watts, 1, dp) + " W" })
@@ -710,7 +845,14 @@ function throughput(bytesPerSecond, dp) {
   return decimal(value, unit === 0 ? 0 : 1, dp) + " " + units[unit] + "/s"
 }
 
-// Bar modules in panel order. The GPU module needs a GPU the card can read.
+// GPU load for the ring, the bar and the tooltip; a dash where the GPU has no
+// load counter.
+function gpuLoadText(g, dp, whole) {
+  if (!g || g.busy === null) return UNAVAILABLE
+  return whole ? percentInt(g.busy) : percent1(g.busy, dp)
+}
+
+// Bar modules in panel order. The GPU module needs a GPU to follow.
 function barModules(showCpu, showMemory, showGpu, hasGpu) {
   var list = []
   if (showCpu) list.push("cpu")
@@ -737,7 +879,7 @@ function barSwitches(settings, hasGpu) {
   for (var i = 0; i < BAR_SWITCHES.length; i++) {
     var s = BAR_SWITCHES[i]
     var noGpu = s.key === "showGpu" && !hasGpu
-    out.push({ key: s.key, label: s.label, checked: shown(settings, s.key), enabled: !noGpu, note: noGpu ? "No supported GPU" : "" })
+    out.push({ key: s.key, label: s.label, checked: shown(settings, s.key), enabled: !noGpu, note: noGpu ? "No GPU found" : "" })
   }
   return out
 }
@@ -759,6 +901,6 @@ function withBarSetting(settings, key, value, hasGpu) {
 
 function tooltip(cpu, memory, gpu, dp) {
   var text = "CPU " + percent1(cpu ? cpu.total : 0, dp)
-  if (gpu) text += " · GPU " + percent1(gpu.busy, dp)
+  if (gpu) text += " · GPU " + gpuLoadText(gpu, dp, false)
   return text + " · Memory " + percent1(memory ? memory.fraction : 0, dp)
 }

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "juancasanueva.system-monitor",
   "name": "System Monitor",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "author": "Juan Casanueva",
   "license": "MIT",
   "description": "CPU, GPU and memory sparklines in the bar, with a panel of CPU, GPU, Memory, Disk and Network cards. A port of the macOS System Monitor menu bar app.",
