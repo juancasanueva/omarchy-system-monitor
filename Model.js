@@ -879,7 +879,8 @@ function barModules(showCpu, showMemory, showGpu, hasGpu) {
 var BAR_SWITCHES = [
   { key: "showCpu", label: "CPU" },
   { key: "showGpu", label: "GPU" },
-  { key: "showMemory", label: "MEM" }
+  { key: "showMemory", label: "MEM" },
+  { key: "showGraphs", label: "Graphs" }
 ]
 
 // A missing key means shown, as the manifest defaults say.

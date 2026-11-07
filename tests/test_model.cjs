@@ -582,18 +582,26 @@ test("withBarSetting refuses to hide the last module on the bar", () => {
   assert.notEqual(M.withBarSetting({ showCpu: false, showGpu: false, showMemory: false }, "showCpu", true, true), null)
 })
 
-test("withBarSetting only writes the three bar switches", () => {
+test("withBarSetting saves the graphs switch without touching the modules", () => {
+  const next = M.withBarSetting({ showCpu: false, showGpu: false, custom: "kept" }, "showGraphs", false, true)
+  assert.deepEqual(JSON.parse(JSON.stringify(next)), { showCpu: false, showGpu: false, custom: "kept", showGraphs: false })
+  assert.deepEqual(JSON.parse(JSON.stringify(M.withBarSetting({ showGraphs: false }, "showGraphs", true, false))), { showGraphs: true })
+})
+
+test("withBarSetting only writes the bar switches", () => {
   assert.equal(M.withBarSetting({}, "custom", false, true), null)
   assert.equal(M.withBarSetting({}, "__proto__", false, true), null)
 })
 
-test("barSwitches lists CPU, GPU and MEM with their state", () => {
+test("barSwitches lists CPU, GPU, MEM and Graphs with their state", () => {
   const rows = M.barSwitches({ showGpu: false }, true)
   assert.deepEqual(Array.from(rows, (r) => [r.key, r.label, r.checked, r.enabled]), [
     ["showCpu", "CPU", true, true],
     ["showGpu", "GPU", false, true],
-    ["showMemory", "MEM", true, true]
+    ["showMemory", "MEM", true, true],
+    ["showGraphs", "Graphs", true, true]
   ])
+  assert.equal(M.barSwitches({ showGraphs: false }, true)[3].checked, false)
   const noGpu = M.barSwitches({}, false)
   assert.equal(noGpu[1].enabled, false)
   assert.equal(noGpu[1].note, "No GPU found")

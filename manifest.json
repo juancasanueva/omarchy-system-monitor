@@ -19,12 +19,14 @@
     "defaults": {
       "showCpu": true,
       "showMemory": true,
-      "showGpu": true
+      "showGpu": true,
+      "showGraphs": true
     },
     "schema": [
       { "key": "showCpu", "type": "boolean", "label": "Show CPU", "defaultValue": true },
       { "key": "showMemory", "type": "boolean", "label": "Show memory", "defaultValue": true },
-      { "key": "showGpu", "type": "boolean", "label": "Show GPU", "defaultValue": true }
+      { "key": "showGpu", "type": "boolean", "label": "Show GPU", "defaultValue": true },
+      { "key": "showGraphs", "type": "boolean", "label": "Show graphs", "defaultValue": true }
     ]
   }
 }
