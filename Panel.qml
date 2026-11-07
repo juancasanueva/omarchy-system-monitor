@@ -18,6 +18,7 @@ Panel {
   readonly property bool showCpu: setting("showCpu", true) !== false
   readonly property bool showMemory: setting("showMemory", true) !== false
   readonly property bool showGpu: setting("showGpu", true) !== false
+  readonly property bool showGraphs: setting("showGraphs", true) !== false
   readonly property var barModules: Model.barModules(root.showCpu, root.showMemory, root.showGpu, root.hasGpu)
 
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -517,10 +518,8 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
             }
 
-            // Fixed to the width of "100%" so a changing value never moves the bar.
+            // Only as wide as the value, so the bar takes the least space.
             Text {
-              width: widest.implicitWidth
-              horizontalAlignment: Text.AlignRight
               textFormat: Text.PlainText
               text: root.moduleValue(moduleRow.modelData)
               color: root.barForeground
@@ -530,6 +529,7 @@ Panel {
             }
 
             Sparkline {
+              visible: root.showGraphs
               width: Style.space(40)
               height: Style.space(14)
               samples: root.moduleSamples(moduleRow.modelData)
@@ -540,15 +540,6 @@ Panel {
           }
         }
       }
-    }
-
-    Text {
-      id: widest
-      visible: false
-      textFormat: Text.PlainText
-      text: "100%"
-      font.family: root.fontFamily
-      font.pixelSize: Style.space(11)
     }
 
     // Vertical bar: label over value per module.
@@ -926,7 +917,7 @@ Panel {
   }
 
   component SettingsCard: Card {
-    CardHeader { width: parent.width; glyph: Model.glyphs.settings; title: "Bar"; detail: "Modules shown in the bar"; accent: root.pal.cpuAccent }
+    CardHeader { width: parent.width; glyph: Model.glyphs.settings; title: "Bar"; detail: "What the bar shows"; accent: root.pal.cpuAccent }
 
     Repeater {
       model: Model.barSwitches(root.settings, root.hasGpu)

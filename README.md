@@ -12,7 +12,7 @@ CPU, GPU and memory with live sparklines in the Omarchy bar, and a panel with CP
 - **Memory**: usage ring, Used, Total, Wired and Compressed, a stacked bar (App, Wired, Compressed, Cached, Free) with its legend, and a history graph.
 - **Disk**: usage ring for `/`, Used, Free and Total, and read and write throughput.
 - **Network**: download and upload rates, totals since boot, and a shared-scale graph of both.
-- **Settings**: the gear next to **Open btop** switches the panel to the bar settings, where CPU, GPU and MEM can each be shown or hidden. Changes apply right away and are saved in `shell.json`.
+- **Settings**: the gear next to **Open btop** switches the panel to the bar settings, where CPU, GPU and MEM can each be shown or hidden, and the graphs can be switched off to keep the bar narrow on small screens. Changes apply right away and are saved in `shell.json`.
 - **btop**: right-click the widget, or use **Open btop** at the top of the panel, to open btop in your terminal as a tiled window. If btop is already open from the widget, its window is focused instead. It uses Omarchy's TUI launcher with its own app id (`io.github.juancasanueva.btop`), so Omarchy's float rule for Super+Ctrl+T btop does not apply.
 
 When the cards do not fit the screen, the panel scrolls. The widget samples every 2 seconds, or every second while the panel is open. Disk capacity refreshes every 30 seconds and whenever the panel opens.
@@ -60,13 +60,14 @@ If a theme defines none of these, its accent colour is used (and its urgent colo
 omarchy plugin add https://github.com/juancasanueva/omarchy-system-monitor.git --enable
 ```
 
-Settings: click the gear next to **Open btop** in the panel and switch CPU, GPU and MEM on or off for the bar. The last module on the bar cannot be switched off, so the widget never disappears. The same keys can be set in the widget's `shell.json` entry or under Setup > Bar:
+Settings: click the gear next to **Open btop** in the panel and switch CPU, GPU and MEM on or off for the bar, or turn off Graphs to show only the values. The last module on the bar cannot be switched off, so the widget never disappears. The same keys can be set in the widget's `shell.json` entry or under Setup > Bar:
 
 | Key | Default | Effect |
 | --- | --- | --- |
 | `showCpu` | `true` | Show the CPU module in the bar |
 | `showMemory` | `true` | Show the MEM module in the bar |
 | `showGpu` | `true` | Show the GPU module in the bar (it never appears without a GPU) |
+| `showGraphs` | `true` | Show the sparkline next to each value in the bar |
 
 Click the widget, or run `omarchy-shell juancasanueva.system-monitor toggle`, to open the panel. Esc closes it. Right-click the widget to open btop.
 
